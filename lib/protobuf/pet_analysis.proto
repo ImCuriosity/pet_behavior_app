@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+// 서비스의 패키지 이름 정의
+package petanalysis;
+
+// Flutter 클라이언트에서 전송할 입력 데이터 요청 메시지
+
+// 1. 소리 분석 요청 (대용량 이진 데이터 전송 예시)
+message AnalyzeSoundRequest {
+  // 원시 오디오 바이트 데이터. gRPC는 이를 효율적으로 스트리밍합니다. [cite: 7, 27]
+  bytes audio_data = 1;
+  // 어떤 강아지에 대한 분석인지 식별자 포함
+  string dog_id = 2;
+}
+
+// 2. 표정 분석 요청 (이미지 프레임 스트리밍 예시)
+// 실시간 표정 분석을 위해 스트리밍 방식을 가정하고 이미지 프레임을 전송합니다. [cite: 27]
+message AnalyzeExpressionRequest {
+  // 원시 이미지 프레임 바이트 데이터
+  bytes image_frame_data = 1;
+  string dog_id = 2;
+}
+
+
+// ML 모델이 계산한 분석 결과를 반환하는 응답 메시지
+
+message AnalysisResult {
+  // 강아지 상태: Positive/Negative 특징 점수 (float, ML 모델 산출값) [cite: 5, 33]
+  float positive_score = 1;
+  // 강아지 상태: Active/Passive 특징 점수 (float, ML 모델 산출값) [cite: 5, 33]
+  float active_score = 2;
+  // 로그 기록을 위한 타임스탬프
+  string log_timestamp = 3;
+}
+
+
+// 서비스 계약 정의: Flutter 클라이언트와 Python 백엔드 간의 통신 메서드
+
+service PetAnalysisService {
+  // 1. 소리 분석 (Unary Call): 요청을 보내고 단일 응답을 받습니다.
+  rpc AnalyzeSound (AnalyzeSoundRequest) returns (AnalysisResult);
+
+  // 2. 표정 분석 (Client Streaming 또는 Bidirectional Streaming 가정):
+  // 실시간으로 여러 이미지 프레임을 전송하고, 최종 분석 결과를 받거나 (Client Streaming),
+  // 실시간 피드백을 받을 수 있도록 (Bidirectional Streaming) 정의할 수 있습니다. [cite: 27]
+  rpc AnalyzeExpression (stream AnalyzeExpressionRequest) returns (AnalysisResult);
+
+  // 참고: 뇌파, 몸짓 분석 모델이 있다면 유사한 메서드를 추가 정의합니다.
+}
