@@ -1,75 +1,127 @@
-# main.py (테스트용 gRPC 서버 구현)
-import grpc
-from concurrent import futures
-import time
+# main.py (FastAPI 서버 로직 - 모든 기능 복원)
 
-# 자동 생성된 Protobuf 및 gRPC 스텁 파일을 import합니다.
-# (생성된 파일 경로에 따라 import 경로를 조정해야 합니다.)
-import pet_analysis_pb2 as pb
-import pet_analysis_pb2_grpc as pb_grpc
+import os
+import random
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
+from jose import jwt, JWTError
 
-# ----------------------------------------------------
-# 1. gRPC 서비스 구현체 (Servicer)
-# ----------------------------------------------------
-
-class PetAnalysisServicer(pb_grpc.PetAnalysisServiceServicer):
-    """
-    PetAnalysisService 인터페이스의 gRPC 메서드를 구현합니다.
-    현재는 ML 모델이 없으므로, 하드코딩된 테스트 응답을 반환합니다.
-    """
-
-    def AnalyzeSound(self, request, context):
-        """소리 분석 요청을 처리합니다 (Unary Call)."""
-
-        # 1. 인증 및 식별 정보 로깅 (실제 구현 시 여기서 JWT 검증을 수행합니다)
-        print(f"[{time.strftime('%H:%M:%S')}] Received AnalyzeSound Request:")
-        print(f"  Auth Token: {request.common_fields.auth_token[:10]}...")
-        print(f"  Pet ID: {request.common_fields.pet_id}")
-
-        # 2. 테스트용 응답 데이터 생성 (가짜 ML 모델 결과)
-        # Flutter 클라이언트가 통신에 성공했는지 확인할 수 있도록 응답을 구성합니다.
-
-        # ML 모델이 강아지가 "Positive" 0.8, "Active" 0.6 이라고 추론했다고 가정합니다.
-        response = pb.AnalysisResult(
-            positive_score=0.8,
-            active_score=0.6,
-            success=True,
-            message=f"Sound analysis successful for Pet ID: {request.common_fields.pet_id}. Mock data returned."
-        )
-
-        # 3. 응답 반환
-        return response
-
-    # AnalyzeExpression, AnalyzeEEG, AnalyzeBodyLanguage 메서드는 현재 생략합니다.
-    # 클라이언트 스트리밍 테스트는 단일 요청/응답(Unary) 테스트가 성공한 후에 진행하는 것이 효율적입니다.
+import vertexai
+from vertexai.generative_models import GenerativeModel
 
 # ----------------------------------------------------
-# 2. gRPC 서버 실행
+# 1. FastAPI 인스턴스, 환경 변수, 전역 변수 설정
 # ----------------------------------------------------
 
-def serve():
-    # 스레드 풀을 사용하여 서버를 실행합니다.
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+app = FastAPI(title="Pet Behavior Analysis API", version="1.0.0")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],)
 
-    # 구현체를 gRPC 서버에 등록합니다.
-    pb_grpc.add_PetAnalysisServiceServicer_to_server(
-        PetAnalysisServicer(), server
-    )
+SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET")
+gemini_model = None
+security_scheme = HTTPBearer()
 
-    # 포트를 바인딩하고 HTTP/2 프로토콜을 사용하여 서버를 시작합니다.
-    # Google Cloud Run과 같은 환경에 배포할 경우 포트는 환경 변수(예: 8080)를 사용해야 합니다.
-    port = '50051'
-    server.add_insecure_port(f'[::]:{port}')
-    server.start()
+# ----------------------------------------------------
+# 2. 서버 시작 시 초기화 로직
+# ----------------------------------------------------
 
-    print(f"gRPC Mock Server listening on port {port}")
-
-    # 서버가 종료될 때까지 대기합니다.
+@app.on_event("startup")
+def load_and_initialize():
+    global gemini_model
+    print("Initializing FastAPI Application with Vertex AI (Gemini 2.5 Flash)...")
     try:
-        while True:
-            time.sleep(86400) # 하루 동안 대기
-    except KeyboardInterrupt:
-        server.stop(0)
+        vertexai.init(project=os.environ.get("GCP_PROJECT"), location="us-central1")
+        gemini_model = GenerativeModel("gemini-2.5-flash")
+        print("✅ Vertex AI Gemini 2.5 Flash model initialized successfully.")
+    except Exception as e:
+        print(f"🚨 FATAL: Failed to initialize Vertex AI client: {e}")
+    if not SUPABASE_JWT_SECRET:
+        print("🚨 FATAL: SUPABASE_JWT_SECRET is not set. Authentication will fail.")
 
-if __name__ == '__main__':
-    serve()
+# ----------------------------------------------------
+# ✨ [추가] 3. 가짜 분석 모델 (나중에 실제 모델로 교체될 부분)
+# ----------------------------------------------------
+
+def get_sound_analysis_result(audio_file: UploadFile):
+    print(f"Analyzing sound file: {audio_file.filename} (mock)")
+    return {"positive_score": random.uniform(0.1, 0.9), "active_score": random.uniform(0.3, 0.9)}
+
+def get_facial_expression_result(image_file: UploadFile):
+    print(f"Analyzing facial expression in: {image_file.filename} (mock)")
+    return {"positive_score": random.uniform(0.2, 0.8), "active_score": random.uniform(0.1, 0.5)}
+
+def get_body_language_result(image_file: UploadFile):
+    print(f"Analyzing body language in: {image_file.filename} (mock)")
+    return {"positive_score": random.uniform(0.3, 0.9), "active_score": random.uniform(0.2, 0.8)}
+
+def get_eeg_result(eeg_file: UploadFile):
+    print(f"Analyzing EEG file: {eeg_file.filename} (mock)")
+    return {"positive_score": random.uniform(0.1, 0.6), "active_score": random.uniform(0.1, 0.4)}
+
+# ----------------------------------------------------
+# 4. 사용자 인증 (JWT 검증) 함수
+# ----------------------------------------------------
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security_scheme)) -> dict:
+    token = credentials.credentials
+    if not SUPABASE_JWT_SECRET:
+        raise HTTPException(status_code=500, detail="Server configuration error: JWT secret not set.")
+    try:
+        payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=["HS256"], audience="authenticated")
+        return payload
+    except JWTError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid or expired token: {e}", headers={"WWW-Authenticate": "Bearer"})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during token validation: {e}")
+
+# ----------------------------------------------------
+# ✨ [수정] 5. ML 분석 엔드포인트들이 가짜 모델 함수를 호출하도록 변경
+# ----------------------------------------------------
+
+@app.post("/api/v1/ml/analyze_sound", dependencies=[Depends(get_current_user)])
+async def analyze_sound_endpoint(dog_id: str = Form(...), audio_file: UploadFile = File(...)):
+    model_result = get_sound_analysis_result(audio_file)
+    return {"status": "success", "dog_id": dog_id, **model_result}
+
+@app.post("/api/v1/ml/analyze_facial_expression", dependencies=[Depends(get_current_user)])
+async def analyze_facial_expression_endpoint(dog_id: str = Form(...), image_file: UploadFile = File(...)):
+    model_result = get_facial_expression_result(image_file)
+    return {"status": "success", "dog_id": dog_id, **model_result}
+
+@app.post("/api/v1/ml/analyze_body_language", dependencies=[Depends(get_current_user)])
+async def analyze_body_language_endpoint(dog_id: str = Form(...), image_file: UploadFile = File(...)):
+    model_result = get_body_language_result(image_file)
+    return {"status": "success", "dog_id": dog_id, **model_result}
+
+@app.post("/api/v1/ml/analyze_eeg", dependencies=[Depends(get_current_user)])
+async def analyze_eeg_endpoint(dog_id: str = Form(...), eeg_file: UploadFile = File(...)):
+    model_result = get_eeg_result(eeg_file)
+    return {"status": "success", "dog_id": dog_id, **model_result}
+
+# ----------------------------------------------------
+# 6. 엔드포인트: RAG 챗봇 (Gemini 모델 사용)
+# ----------------------------------------------------
+
+@app.post("/api/v1/chatbot/query")
+async def get_chatbot_response_endpoint(request_data: dict, current_user: dict = Depends(get_current_user)):
+    global gemini_model
+    user_query = request_data.get("query")
+    user_id = current_user.get('sub')
+
+    if not user_query:
+        raise HTTPException(status_code=400, detail="Missing 'query' field.")
+    if not gemini_model:
+        raise HTTPException(status_code=503, detail="Vertex AI model is not available.")
+
+    try:
+        prompt = f"You are a friendly and helpful expert on dog behavior. A user with ID '{user_id}' is asking a question. Here is their question: '{user_query}'. Provide a concise and helpful answer."
+        response = await gemini_model.generate_content_async(prompt)
+        return {"user_id": user_id, "response": response.text}
+    except Exception as e:
+        print(f"🔥 Vertex AI Gemini API Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Vertex AI call failed: {e}")
+
+# ... (Health Check 엔드포인트는 변경 없음) ...
+@app.get("/")
+def health_check():
+    return {"status": "ok", "service": "FastAPI ML Backend"}
