@@ -1,8 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
+
+    <!-- ✨ [수정] V1 임베딩 속성인 android:name을 삭제합니다. -->
     <application
         android:label="dognal1"
-        android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"
@@ -13,6 +14,11 @@
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
+
+            <meta-data
+              android:name="io.flutter.embedding.android.NormalTheme"
+              android:resource="@style/NormalTheme"
+              />
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -27,5 +33,10 @@
                 <data android:scheme="io.supabase.flutter" android:host="login-callback" />
             </intent-filter>
         </activity>
+
+        <!-- ✨ [수정] V2 임베딩을 활성화하는 메타데이터를 올바른 위치에 추가합니다. -->
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
     </application>
 </manifest>

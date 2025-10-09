@@ -53,3 +53,5 @@ app.*.map.json
 .env
 gemini_key.txt
 supabase_service_key.txt
+ngrok.exe
+ngrok.yml

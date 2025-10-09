@@ -59,16 +59,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Pet Behavior Analysis API", version="1.8.0", lifespan=lifespan)
 
-origins = [
-    "http://localhost",
-    "http://127.0.0.1",
-]
-origins.extend([f"http://localhost:{port}" for port in range(3000, 10000)])
-origins.extend([f"http://127.0.0.1:{port}" for port in range(3000, 10000)])
-
+# ✨ [수정] ngrok에서의 접속을 허용하기 위해 모든 주소(origins)를 허용합니다.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"], # localhost만 허용하던 것에서 모든 주소를 허용하도록 변경
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

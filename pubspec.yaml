@@ -35,5 +35,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  # ✨ [복원] assets/ 폴더 대신 원래대로 루트의 .env 파일을 지정합니다.
   assets:
     - .env

@@ -2,16 +2,31 @@
 
 import 'dart:typed_data';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-final restClientProvider = Provider<RestClient>((ref) {
-  return RestClient();
-});
+final restClientProvider = Provider<RestClient>((ref) => RestClient());
 
 class RestClient {
-  static const String _baseUrl = 'https://pet-analysis-backend-254427467650.asia-northeast3.run.app/api/v1';
+  String get _baseUrl {
+    // ✨ [수정] 릴리즈 빌드를 위해 컴파일 타임 변수를 우선적으로 사용하도록 변경합니다.
+    // 1. '--dart-define'으로 전달된 'API_BASE_URL'이 있는지 확인합니다.
+    const String baseUrlFromEnv = String.fromEnvironment('API_BASE_URL');
+
+    // 2. 만약 있다면 그 값을 사용하고, 없다면 (개발 중이라면) .env 파일에서 읽어옵니다.
+    final baseUrl = baseUrlFromEnv.isNotEmpty
+        ? baseUrlFromEnv
+        : dotenv.env['API_BASE_URL'];
+
+    if (baseUrl == null || baseUrl.isEmpty) {
+      throw Exception(
+          'FATAL: API_BASE_URL is not set. Please set it in .env file for development, or pass it via --dart-define for release builds.');
+    }
+    return '$baseUrl/api/v1';
+  }
 
   Future<Map<String, dynamic>> _analyze({
     required String endpoint,
@@ -22,11 +37,9 @@ class RestClient {
     required MediaType contentType,
     required String accessToken,
   }) async {
-    // ✨ [수정] 잘못된 \ 기호를 제거하여 올바른 URL을 생성합니다.
     final url = Uri.parse('$_baseUrl/$endpoint');
     var request = http.MultipartRequest('POST', url);
 
-    // ✨ [수정] 잘못된 \ 기호를 제거하여 올바른 인증 헤더를 전송합니다.
     request.headers['Authorization'] = 'Bearer $accessToken';
 
     request.fields['dog_id'] = dogId;
@@ -49,11 +62,10 @@ class RestClient {
           final errorJson = jsonDecode(responseBody);
           detail = errorJson['detail'] ?? responseBody;
         } catch (_) {}
-        // ✨ [수정] 잘못된 \ 기호를 제거합니다.
-        throw Exception('Failed to analyze ($endpoint). Status: ${response.statusCode}. Detail: $detail');
+        throw Exception(
+            'Failed to analyze ($endpoint). Status: ${response.statusCode}. Detail: $detail');
       }
     } catch (e) {
-      // ✨ [수정] 잘못된 \ 기호를 제거하여 실제 오류를 출력합니다.
       print('Analysis error ($endpoint): $e');
       rethrow;
     }
@@ -134,7 +146,6 @@ class RestClient {
         url,
         headers: {
           'Content-Type': 'application/json',
-          // ✨ [수정] 잘못된 \ 기호를 제거합니다.
           'Authorization': 'Bearer $accessToken',
         },
         body: jsonEncode({'dog_id': dogId, 'query': userQuery}),
@@ -151,11 +162,10 @@ class RestClient {
         } catch (_) {
           detail = responseBody;
         }
-        // ✨ [수정] 잘못된 \ 기호를 제거합니다.
-        throw Exception('Failed to get chatbot response. Status: ${response.statusCode}. Detail: $detail');
+        throw Exception(
+            'Failed to get chatbot response. Status: ${response.statusCode}. Detail: $detail');
       }
     } catch (e) {
-      // ✨ [수정] 잘못된 \ 기호를 제거하여 실제 오류를 출력합니다.
       print('Chatbot API call error: $e');
       rethrow;
     }

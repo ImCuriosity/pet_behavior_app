@@ -1,15 +1,7 @@
-# requirements.txt (진짜 최종 검증 완료 버전)
-
 fastapi
-uvicorn
-gunicorn
-
-# ✨ [오류 수정] FastAPI가 Form 데이터를 처리하기 위해 반드시 필요한 라이브러리
-python-multipart
-
-# Google Cloud Vertex AI
-google-cloud-aiplatform
-
-# Supabase & JWT
+uvicorn[standard]
 supabase
 python-jose[cryptography]
+google-cloud-aiplatform
+python-multipart
+gunicorn
