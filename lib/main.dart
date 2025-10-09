@@ -44,6 +44,7 @@ class MyApp extends StatelessWidget {
         primarySwatch: Colors.indigo,
       ),
       home: const AuthChecker(),
+      debugShowCheckedModeBanner: false, // ✨ DEBUG 배너 제거
     );
   }
 }

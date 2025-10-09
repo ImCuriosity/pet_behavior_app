@@ -1,0 +1,9 @@
+fastapi==0.110.0
+uvicorn[standard]==0.29.0
+python-multipart==0.0.9
+supabase==2.0.2
+
+google-cloud-aiplatform==1.49.0
+
+# ⭐️ [추가] Supabase JWT(인증 토큰) 검증을 위한 라이브러리
+python-jose[cryptography]==3.3.0
