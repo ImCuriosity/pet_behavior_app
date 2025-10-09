@@ -49,5 +49,7 @@ app.*.map.json
 .metadata
 .packages
 
-# Environment variables
+# Environment variables & Secrets
 .env
+gemini_key.txt
+supabase_service_key.txt

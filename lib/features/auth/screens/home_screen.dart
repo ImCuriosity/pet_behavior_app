@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:dognal1/features/dog_stats/screens/dog_stats_screen.dart'; // ✨그래프 화면 import
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -71,13 +72,15 @@ class HomeScreen extends ConsumerWidget {
             const Spacer(),
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 10.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              child: Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 12.0,
+                runSpacing: 12.0,
                 children: [
                   _buildNavigationButton(
                     context: context,
                     icon: Icons.book,
-                    label: '강아지 일기 훔쳐보기',
+                    label: '강아지 일기',
                     onPressed: () {
                       Navigator.push(
                         context,
@@ -93,6 +96,17 @@ class HomeScreen extends ConsumerWidget {
                       Navigator.push(
                         context,
                         MaterialPageRoute(builder: (context) => const WalkScreen()),
+                      );
+                    },
+                  ),
+                  _buildNavigationButton(
+                    context: context,
+                    icon: Icons.show_chart,
+                    label: '감정 그래프',
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (context) => const DogStatsScreen()),
                       );
                     },
                   ),
@@ -166,13 +180,18 @@ class _AnalysisControlPanelState extends ConsumerState<AnalysisControlPanel> {
       final result = await analysisFunction(accessToken);
       final status = result['status'] ?? 'unknown';
       
-      // ✨ [수정] 서버에서 보내주는 점수를 화면에 표시합니다.
       if (status == 'success') {
         final positiveScore = result['positive_score'] ?? 0.0;
         final activeScore = result['active_score'] ?? 0.0;
         setState(() {
-          _result = '✅ 분석 성공!\n- 긍정 점수 (Positive): ${positiveScore.toStringAsFixed(2)}\n- 활동 점수 (Active): ${activeScore.toStringAsFixed(2)}';
+          _result = '✅ 분석 성공! (그래프 데이터 업데이트 완료)\n- 긍정 점수: ${positiveScore.toStringAsFixed(2)}\n- 활동 점수: ${activeScore.toStringAsFixed(2)}';
         });
+
+        // ✨ [추가] 그래프 데이터 새로고침!
+        // analysisResultsProvider를 무효화하여 다음 번에 그래프 화면에 들어갔을 때
+        // 데이터를 새로 불러오도록 만듭니다.
+        ref.invalidate(analysisResultsProvider);
+
       } else {
         setState(() {
           _result = '❌ 서버 응답 오류: $status';

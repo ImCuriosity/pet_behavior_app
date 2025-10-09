@@ -1,9 +1,15 @@
-fastapi==0.110.0
-uvicorn[standard]==0.29.0
-python-multipart==0.0.9
-supabase==2.0.2
+# requirements.txt (진짜 최종 검증 완료 버전)
 
-google-cloud-aiplatform==1.49.0
+fastapi
+uvicorn
+gunicorn
 
-# ⭐️ [추가] Supabase JWT(인증 토큰) 검증을 위한 라이브러리
-python-jose[cryptography]==3.3.0
+# ✨ [오류 수정] FastAPI가 Form 데이터를 처리하기 위해 반드시 필요한 라이브러리
+python-multipart
+
+# Google Cloud Vertex AI
+google-cloud-aiplatform
+
+# Supabase & JWT
+supabase
+python-jose[cryptography]

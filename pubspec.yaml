@@ -1,8 +1,6 @@
 name: dognal1
 description: "dognal1"
-# The following line prevents the package from being accidentally published to
-# pub.dev using `flutter pub publish`. This is preferred for private packages.
-publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+publish_to: 'none'
 
 version: 1.0.0+1
 
@@ -12,48 +10,30 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  # 오프라인 캐싱을 위한 Hive 패키지도 미리 추가해두면 좋습니다.
   hive: ^2.2.3
   hive_flutter: ^1.1.0
   flutter_dotenv: ^6.0.0
-
-  # The following adds the Cupertino Icons font to your application.
-  # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
-  # 통신 및 데이터
-  http: ^1.5.0 # REST API 통신을 위한 표준 HTTP 클라이언트 추가
-  msgpack_dart: ^1.0.1 # MessagePack 이진 직렬화 포맷 사용 추가 (대용량 데이터 효율성 개선)
-  supabase_flutter: ^2.5.0 # Supabase/PostgreSQL 연동
-  geolocator: ^12.0.0    # GPS 추적
-
-  # 상태 관리 및 UI/게이미피케이션
-  flutter_riverpod: ^2.5.0 # 상태 관리
+  http: ^1.5.0
+  msgpack_dart: ^1.0.1
+  supabase_flutter: ^2.5.0
+  geolocator: ^12.0.0
+  flutter_riverpod: ^2.5.0
   riverpod_annotation: ^2.3.5
-  rive: ^0.13.0          # 동적 캐릭터 애니메이션
+  rive: ^0.13.0
+
+  # ✨ [추가] 그래프 및 날짜/시간 처리를 위한 라이브러리
+  fl_chart: ^0.68.0
+  intl: ^0.19.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  # 코드 생성 도구 (gRPC 및 Riverpod)
   build_runner: ^2.4.9
-  riverpod_generator: ^2.3.5 # riverpod_annotation 사용 시 필요
-
-  # The "flutter_lints" package below contains a set of recommended lints to
-  # encourage good coding practices. The lint set provided by the package is
-  # activated in the `analysis_options.yaml` file located at the root of your
-  # package. See that file for information about deactivating specific lint
-  # rules and activating additional ones.
+  riverpod_generator: ^2.3.5
   flutter_lints: ^5.0.0
 
-# For information on the generic Dart part of this file, see the
-# following page: https://dart.dev/tools/pub/pubspec
-
-# The following section is specific to Flutter packages.
 flutter:
-
-  # The following line ensures that the Material Icons font is
-  # included with your application, so that you can use the icons in
-  # the material Icons class.
   uses-material-design: true
   assets:
     - .env
