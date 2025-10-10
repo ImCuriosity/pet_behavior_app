@@ -1,24 +1,22 @@
-
-// lib/features/dog_stats/screens/dog_stats_screen.dart
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
 
-// 1. 데이터 모델 (analysis_type 추가)
 class AnalysisResult {
   final DateTime createdAt;
   final String analysisType;
   final double positiveScore;
   final double activeScore;
+  final String? activityDescription;
 
   AnalysisResult({
     required this.createdAt,
     required this.analysisType,
     required this.positiveScore,
     required this.activeScore,
+    this.activityDescription,
   });
 
   factory AnalysisResult.fromMap(Map<String, dynamic> map) {
@@ -27,11 +25,11 @@ class AnalysisResult {
       analysisType: map['analysis_type'] ?? 'unknown',
       positiveScore: map['positive_score']?.toDouble() ?? 0.0,
       activeScore: map['active_score']?.toDouble() ?? 0.0,
+      activityDescription: map['activity_description'],
     );
   }
 }
 
-// 2. 데이터 로직 (Provider 수정)
 final analysisResultsProvider =
     FutureProvider.autoDispose.family<List<AnalysisResult>, String>((ref, viewType) async {
   final supabase = Supabase.instance.client;
@@ -39,24 +37,26 @@ final analysisResultsProvider =
 
   if (userId == null) throw Exception('User not logged in');
 
-  // viewType에 따라 데이터 조회 기간 변경 (일간: 7일, 주간: 28일)
-  final daysToFetch = viewType == 'daily' ? 7 : 28;
-  final startDate = DateTime.now().subtract(Duration(days: daysToFetch));
+  final now = DateTime.now();
+  DateTime startDate;
+  if (viewType == 'daily') {
+    startDate = DateTime(now.year, now.month, now.day); // Today 00:00
+  } else { // weekly
+    startDate = now.subtract(Duration(days: now.weekday - 1)); // This week's Monday
+    startDate = DateTime(startDate.year, startDate.month, startDate.day);
+  }
 
   final response = await supabase
       .from('analysis_results')
-      .select('created_at, analysis_type, positive_score, active_score')
+      .select('created_at, analysis_type, positive_score, active_score, activity_description')
       .eq('user_id', userId)
       .gte('created_at', startDate.toIso8601String())
       .order('created_at', ascending: true);
 
   final data = response as List<dynamic>;
-  return data
-      .map((item) => AnalysisResult.fromMap(item as Map<String, dynamic>))
-      .toList();
+  return data.map((item) => AnalysisResult.fromMap(item as Map<String, dynamic>)).toList();
 });
 
-// 3. UI 구현 (막대 그래프로 변경)
 class DogStatsScreen extends ConsumerStatefulWidget {
   const DogStatsScreen({super.key});
 
@@ -65,9 +65,8 @@ class DogStatsScreen extends ConsumerStatefulWidget {
 }
 
 class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
-  String _viewType = 'daily'; // 'daily' (일간) vs 'weekly' (주간)
+  String _viewType = 'daily'; // 'daily' vs 'weekly'
 
-  // 각 분석 타입별 색상 및 한글 이름 정의
   final Map<String, Color> _analysisTypeColors = {
     'eeg': Colors.blue,
     'sound': Colors.green,
@@ -80,6 +79,8 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
     'body_language': '몸짓',
     'facial_expression': '표정',
   };
+
+  Map<int, Map<String, List<AnalysisResult>>> _groupedData = {};
 
   @override
   Widget build(BuildContext context) {
@@ -103,28 +104,23 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
               },
               borderRadius: BorderRadius.circular(8.0),
               children: const [
-                Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16),
-                    child: Text('일간 추세')),
-                Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16),
-                    child: Text('주간 평균')),
+                Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Text('오늘')),
+                Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Text('주간')),
               ],
             ),
           ),
           Expanded(
             child: resultsAsyncValue.when(
               loading: () => const Center(child: CircularProgressIndicator()),
-              error: (err, stack) =>
-                  Center(child: Text('데이터를 불러오는데 실패했습니다: $err')),
+              error: (err, stack) => Center(child: Text('데이터를 불러오는데 실패했습니다: $err')),
               data: (results) {
                 if (results.isEmpty) {
-                  return const Center(
-                      child: Text('표시할 데이터가 없습니다.\n분석을 먼저 시작해주세요!'));
+                  return const Center(child: Text('표시할 데이터가 없습니다.\n분석을 먼저 시작해주세요!'));
                 }
+                _groupData(results);
                 return Padding(
                   padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
-                  child: BarChart(_buildBarChartData(results)),
+                  child: BarChart(_buildBarChartData()),
                 );
               },
             ),
@@ -136,7 +132,6 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
     );
   }
 
-  // 범례 위젯
   Widget _buildLegend() {
     return Wrap(
       spacing: 16,
@@ -155,65 +150,65 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
     );
   }
 
-  // 막대 그래프 데이터 생성 로직
-  BarChartData _buildBarChartData(List<AnalysisResult> results) {
-    // 1. 데이터 가공: <그룹 인덱스, <분석 타입, 점수 리스트>>
-    final Map<int, Map<String, List<double>>> groupedScores = {};
-    final now = DateTime.now();
+  void _groupData(List<AnalysisResult> results) {
+    _groupedData = {};
 
     for (var result in results) {
       int groupIndex;
       if (_viewType == 'daily') {
-        groupIndex = now.difference(result.createdAt).inDays;
-      } else {
-        groupIndex = (now.difference(result.createdAt).inDays / 7).floor();
+        groupIndex = result.createdAt.hour;
+      } else { // weekly
+        groupIndex = result.createdAt.weekday; // 1: Monday, 7: Sunday
       }
 
-      groupedScores.putIfAbsent(groupIndex, () => {});
-      groupedScores[groupIndex]!.putIfAbsent(result.analysisType, () => []);
-      groupedScores[groupIndex]![result.analysisType]!.add(result.positiveScore);
+      _groupedData.putIfAbsent(groupIndex, () => {});
+      _groupedData[groupIndex]!.putIfAbsent(result.analysisType, () => []);
+      _groupedData[groupIndex]![result.analysisType]!.add(result);
     }
+  }
 
-    // 2. 가공된 데이터로 BarChartGroupData 리스트 생성
+  BarChartData _buildBarChartData() {
     final List<BarChartGroupData> barGroups = [];
-    final int maxGroups = _viewType == 'daily' ? 7 : 4;
     const double barWidth = 8;
 
-    for (int i = maxGroups - 1; i >= 0; i--) {
-      final scoresForGroup = groupedScores[i] ?? {};
-
-      barGroups.add(BarChartGroupData(
-        x: maxGroups - 1 - i,
-        barsSpace: 4,
-        barRods: _analysisTypeColors.keys.map((type) {
-          final scores = scoresForGroup[type] ?? [];
-          final averageScore =
-              scores.isEmpty ? 0.0 : scores.reduce((a, b) => a + b) / scores.length;
-          return BarChartRodData(
-            toY: averageScore,
-            color: _analysisTypeColors[type],
-            width: barWidth,
-            borderRadius: const BorderRadius.only(
-              topLeft: Radius.circular(4),
-              topRight: Radius.circular(4),
-            ),
-          );
-        }).toList(),
-      ));
+    if (_viewType == 'daily') {
+      for (int i = 0; i < 24; i++) { // 0h to 23h
+        final scoresForGroup = _groupedData[i] ?? {};
+        barGroups.add(BarChartGroupData(
+          x: i,
+          barsSpace: 4,
+          barRods: _analysisTypeColors.keys.map((type) {
+            final scores = scoresForGroup[type]?.map((r) => r.positiveScore).toList() ?? [];
+            final averageScore = scores.isEmpty ? 0.0 : scores.reduce((a, b) => a + b) / scores.length;
+            return BarChartRodData(
+                toY: averageScore, color: _analysisTypeColors[type], width: barWidth);
+          }).toList(),
+        ));
+      }
+    } else { // weekly
+      for (int i = 1; i <= 7; i++) { // Monday(1) to Sunday(7)
+        final scoresForGroup = _groupedData[i] ?? {};
+        barGroups.add(BarChartGroupData(
+          x: i - 1,
+          barsSpace: 4,
+          barRods: _analysisTypeColors.keys.map((type) {
+            final scores = scoresForGroup[type]?.map((r) => r.positiveScore).toList() ?? [];
+            final averageScore = scores.isEmpty ? 0.0 : scores.reduce((a, b) => a + b) / scores.length;
+            return BarChartRodData(
+                toY: averageScore, color: _analysisTypeColors[type], width: barWidth);
+          }).toList(),
+        ));
+      }
     }
 
     return BarChartData(
       barGroups: barGroups,
       alignment: BarChartAlignment.spaceAround,
-      gridData: FlGridData(
-        show: true,
-        drawVerticalLine: false,
-        horizontalInterval: 0.2,
-      ),
+      gridData: FlGridData(show: true, drawVerticalLine: false, horizontalInterval: 0.2),
       borderData: FlBorderData(show: false),
       titlesData: FlTitlesData(
-        topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-        rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
         leftTitles: AxisTitles(
           sideTitles: SideTitles(
             showTitles: true,
@@ -230,39 +225,49 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
               String text;
               final index = value.toInt();
               if (_viewType == 'daily') {
-                final day = now.subtract(Duration(days: maxGroups - 1 - index));
-                text = DateFormat('E', 'ko_KR').format(day);
+                text = '$index시';
               } else {
-                text = '${maxGroups - index}주 전';
+                final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+                text = weekdays[index];
               }
               return SideTitleWidget(
-                  axisSide: meta.axisSide,
-                  child: Text(text, style: const TextStyle(fontSize: 10)));
+                  axisSide: meta.axisSide, child: Text(text, style: const TextStyle(fontSize: 10)));
             },
           ),
         ),
       ),
-// ... (중략)
       barTouchData: BarTouchData(
         touchTooltipData: BarTouchTooltipData(
           getTooltipColor: (_) => Colors.blueGrey,
           getTooltipItem: (group, groupIndex, rod, rodIndex) {
             final type = _analysisTypeColors.keys.elementAt(rodIndex);
+            final groupKey = _viewType == 'daily' ? group.x : (group.x + 1);
+            final resultsForBar = _groupedData[groupKey]?[type] ?? [];
+            final description = resultsForBar
+                .firstWhere((r) => r.activityDescription != null && r.activityDescription!.isNotEmpty,
+                    orElse: () => AnalysisResult(createdAt: DateTime.now(), analysisType: '', positiveScore: 0, activeScore: 0))
+                .activityDescription;
+
+            final title = '${_analysisTypeNames[type] ?? type}\n';
+            final scoreText = rod.toY.toStringAsFixed(2);
+            final descriptionText = description != null ? '\n$description' : '';
+
             return BarTooltipItem(
-              '${_analysisTypeNames[type] ?? type}\n',
+              title,
               const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
               children: <TextSpan>[
                 TextSpan(
-                  text: rod.toY.toStringAsFixed(2),
-                  style: TextStyle(
-                    color: rod.color,
-                    fontWeight: FontWeight.w500,
-                  ),
+                  text: scoreText,
+                  style: TextStyle(color: rod.color, fontWeight: FontWeight.w500),
+                ),
+                TextSpan(
+                  text: descriptionText,
+                  style: const TextStyle(color: Colors.white, fontStyle: FontStyle.italic, fontSize: 12),
                 ),
               ],
             );
           },
-        ), // <-- 깔끔하게 수정됨
+        ),
       ),
     );
   }

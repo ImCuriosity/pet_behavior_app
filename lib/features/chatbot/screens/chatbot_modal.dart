@@ -1,15 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart'; // ✨ 1. flutter_markdown 패키지 import
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dognal1/data/api/rest_client.dart';
-import 'package:supabase_flutter/supabase_flutter.dart'; // ⭐️ [추가] Supabase 패키지 import
-
-// 메시지를 나타내는 간단한 데이터 클래스
-class ChatMessage {
-  final String text;
-  final bool isFromUser;
-
-  ChatMessage({required this.text, required this.isFromUser});
-}
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class ChatbotModal extends ConsumerStatefulWidget {
   const ChatbotModal({super.key});
@@ -19,51 +12,38 @@ class ChatbotModal extends ConsumerStatefulWidget {
 }
 
 class _ChatbotModalState extends ConsumerState<ChatbotModal> {
-  final TextEditingController _controller = TextEditingController();
-  final List<ChatMessage> _messages = [];
+  final TextEditingController _textController = TextEditingController();
+  final List<Map<String, String>> _messages = [];
   bool _isLoading = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _messages.add(ChatMessage(text: '안녕하세요! 강아지에 대해 궁금한 점을 물어보세요.', isFromUser: false));
-  }
+  Future<void> _handleSubmitted(String text) async {
+    if (text.trim().isEmpty) return;
 
-  Future<void> _sendMessage() async {
-    final text = _controller.text;
-    if (text.isEmpty) return;
-
+    _textController.clear();
     setState(() {
-      _messages.add(ChatMessage(text: text, isFromUser: true));
+      _messages.insert(0, {"sender": "user", "text": text});
       _isLoading = true;
     });
-    _controller.clear();
 
     try {
-      // ⭐️ [수정] 현재 로그인된 사용자의 인증 토큰을 가져옵니다.
-      final accessToken = Supabase.instance.client.auth.currentSession?.accessToken;
-
-      if (accessToken == null) {
-        setState(() {
-          _messages.add(ChatMessage(text: '오류: 사용자 인증 정보를 찾을 수 없습니다. 다시 로그인 해주세요.', isFromUser: false));
-        });
-        return; // 토큰이 없으면 함수 종료
-      }
-
       final restClient = ref.read(restClientProvider);
-      // ⭐️ [수정] API 호출 시 인증 토큰을 함께 전달합니다.
-      final botResponse = await restClient.getChatbotResponse(
-        dogId: 'test_dog_id_001', // 실제 강아지 ID로 교체 필요
+      final accessToken = Supabase.instance.client.auth.currentSession?.accessToken;
+      if (accessToken == null) throw Exception('Not authenticated');
+
+      const String mockDogId = 'test_dog_id_001';
+
+      final response = await restClient.getChatbotResponse(
+        dogId: mockDogId,
         userQuery: text,
         accessToken: accessToken,
       );
 
       setState(() {
-        _messages.add(ChatMessage(text: botResponse, isFromUser: false));
+        _messages.insert(0, {"sender": "bot", "text": response});
       });
     } catch (e) {
       setState(() {
-        _messages.add(ChatMessage(text: '오류가 발생했습니다: $e', isFromUser: false));
+        _messages.insert(0, {"sender": "bot", "text": "오류가 발생했어요: $e"});
       });
     } finally {
       setState(() {
@@ -74,54 +54,77 @@ class _ChatbotModalState extends ConsumerState<ChatbotModal> {
 
   @override
   Widget build(BuildContext context) {
-    // ... (UI 코드는 변경 없음) ...
     return Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-        left: 16,
-        right: 16,
-        top: 16,
-      ),
-      child: SizedBox(
+      padding: MediaQuery.of(context).viewInsets,
+      child: Container(
         height: MediaQuery.of(context).size.height * 0.7,
+        padding: const EdgeInsets.all(16.0),
         child: Column(
-          children: [
+          children: <Widget>[
+            Text('챗봇에게 물어보기', style: Theme.of(context).textTheme.headlineSmall),
+            const SizedBox(height: 16),
             Expanded(
               child: ListView.builder(
+                reverse: true,
                 itemCount: _messages.length,
                 itemBuilder: (context, index) {
                   final message = _messages[index];
+                  final isUser = message['sender'] == 'user';
                   return Align(
-                    alignment: message.isFromUser ? Alignment.centerRight : Alignment.centerLeft,
+                    alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
                     child: Container(
-                      margin: const EdgeInsets.symmetric(vertical: 4),
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      margin: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
+                      padding: const EdgeInsets.all(12.0),
                       decoration: BoxDecoration(
-                        color: message.isFromUser ? Theme.of(context).primaryColor : Colors.grey[300],
-                        borderRadius: BorderRadius.circular(12),
+                        color: isUser ? Colors.blue[100] : Colors.grey[200],
+                        borderRadius: BorderRadius.circular(16.0),
                       ),
-                      child: Text(
-                        message.text,
-                        style: TextStyle(color: message.isFromUser ? Colors.white : Colors.black),
-                      ),
+                      // ✨ 2. Text 위젯을 MarkdownBody 위젯으로 교체
+                      child: isUser
+                          ? Text(message['text']!) // 사용자의 메시지는 그대로 Text 위젯 사용
+                          : MarkdownBody( // 챗봇의 메시지는 MarkdownBody로 렌더링
+                              data: message['text']!,
+                              styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+                                p: Theme.of(context).textTheme.bodyMedium, // 일반 텍스트 스타일
+                              ),
+                            ),
                     ),
                   );
                 },
               ),
             ),
-            if (_isLoading) const Padding(padding: EdgeInsets.symmetric(vertical: 8.0), child: CircularProgressIndicator()),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _controller,
-                    decoration: const InputDecoration(hintText: '메시지를 입력하세요...', border: OutlineInputBorder()),
-                    onSubmitted: (_) => _sendMessage(),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(icon: const Icon(Icons.send), onPressed: _sendMessage),
-              ],
+            if (_isLoading) const Padding(
+              padding: EdgeInsets.all(8.0),
+              child: CircularProgressIndicator(),
+            ),
+            const Divider(height: 1.0),
+            _buildTextComposer(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTextComposer() {
+    return IconTheme(
+      data: IconThemeData(color: Theme.of(context).colorScheme.secondary),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
+        child: Row(
+          children: <Widget>[
+            Flexible(
+              child: TextField(
+                controller: _textController,
+                onSubmitted: _isLoading ? null : _handleSubmitted,
+                decoration: const InputDecoration.collapsed(hintText: '강아지에 대해 무엇이든 물어보세요'),
+              ),
+            ),
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 4.0),
+              child: IconButton(
+                icon: const Icon(Icons.send),
+                onPressed: _isLoading ? null : () => _handleSubmitted(_textController.text),
+              ),
             ),
           ],
         ),

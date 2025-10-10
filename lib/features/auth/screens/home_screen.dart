@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
-import 'package:dognal1/features/dog_stats/screens/dog_stats_screen.dart'; // ✨그래프 화면 import
+import 'package:dognal1/features/dog_stats/screens/dog_stats_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -157,41 +157,57 @@ class AnalysisControlPanel extends ConsumerStatefulWidget {
 }
 
 class _AnalysisControlPanelState extends ConsumerState<AnalysisControlPanel> {
-  String _result = '버튼을 눌러 분석을 시작하세요.';
+  String _result = '분석할 활동을 선택하세요.';
   bool _isLoading = false;
 
-  Future<void> _runAnalysis(Future<Map<String, dynamic>> Function(String accessToken) analysisFunction) async {
+  Future<String?> _showDescriptionDialog() async {
+    return showDialog<String>(
+      context: context,
+      builder: (BuildContext context) {
+        final controller = TextEditingController();
+        return AlertDialog(
+          title: const Text('분석 전 활동 설명'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: '강아지가 무엇을 하고 있었나요?',
+              hintText: '예: 창 밖을 보며 짖고 있었음',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('취소'),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+            ElevatedButton(
+              child: const Text('분석 시작'),
+              onPressed: () => Navigator.of(context).pop(controller.text),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _runAnalysis(
+    Future<Map<String, dynamic>> Function() analysisFunction,
+  ) async {
     setState(() {
       _isLoading = true;
       _result = 'Cloud Run 서버에 요청 중...';
     });
 
-    final accessToken = Supabase.instance.client.auth.currentSession?.accessToken;
-
-    if (accessToken == null) {
-      setState(() {
-        _result = '💣 인증 오류: 로그인 상태를 확인해주세요.';
-        _isLoading = false;
-      });
-      return;
-    }
-
     try {
-      final result = await analysisFunction(accessToken);
+      final result = await analysisFunction();
       final status = result['status'] ?? 'unknown';
-      
+
       if (status == 'success') {
-        final positiveScore = result['positive_score'] ?? 0.0;
-        final activeScore = result['active_score'] ?? 0.0;
         setState(() {
-          _result = '✅ 분석 성공! (그래프 데이터 업데이트 완료)\n- 긍정 점수: ${positiveScore.toStringAsFixed(2)}\n- 활동 점수: ${activeScore.toStringAsFixed(2)}';
+          _result = '✅ 분석 성공! 그래프 데이터가 업데이트되었습니다.';
         });
-
-        // ✨ [추가] 그래프 데이터 새로고침!
-        // analysisResultsProvider를 무효화하여 다음 번에 그래프 화면에 들어갔을 때
-        // 데이터를 새로 불러오도록 만듭니다.
         ref.invalidate(analysisResultsProvider);
-
       } else {
         setState(() {
           _result = '❌ 서버 응답 오류: $status';
@@ -241,22 +257,78 @@ class _AnalysisControlPanelState extends ConsumerState<AnalysisControlPanel> {
             ElevatedButton.icon(
               icon: const Icon(Icons.multitrack_audio),
               label: const Text('소리 분석'),
-              onPressed: _isLoading ? null : () => _runAnalysis((accessToken) => restClient.analyzeSound(dogId: mockDogId, audioBytes: mockAudioData, accessToken: accessToken)),
+              onPressed: _isLoading
+                  ? null
+                  : () async {
+                      final description = await _showDescriptionDialog();
+                      if (description == null) return;
+
+                      final accessToken = Supabase.instance.client.auth.currentSession?.accessToken;
+                      if (accessToken == null) return;
+
+                      await _runAnalysis(() => restClient.analyzeSound(
+                          dogId: mockDogId,
+                          audioBytes: mockAudioData,
+                          accessToken: accessToken,
+                          activityDescription: description));
+                    },
             ),
             ElevatedButton.icon(
               icon: const Icon(Icons.sentiment_satisfied),
               label: const Text('표정 분석'),
-              onPressed: _isLoading ? null : () => _runAnalysis((accessToken) => restClient.analyzeFacialExpression(dogId: mockDogId, imageBytes: mockImageData, accessToken: accessToken)),
+              onPressed: _isLoading
+                  ? null
+                  : () async {
+                      final description = await _showDescriptionDialog();
+                      if (description == null) return;
+
+                      final accessToken = Supabase.instance.client.auth.currentSession?.accessToken;
+                      if (accessToken == null) return;
+
+                      await _runAnalysis(() => restClient.analyzeFacialExpression(
+                          dogId: mockDogId,
+                          imageBytes: mockImageData,
+                          accessToken: accessToken,
+                          activityDescription: description));
+                    },
             ),
             ElevatedButton.icon(
               icon: const Icon(Icons.directions_run),
               label: const Text('몸짓 분석'),
-              onPressed: _isLoading ? null : () => _runAnalysis((accessToken) => restClient.analyzeBodyLanguage(dogId: mockDogId, imageBytes: mockImageData, accessToken: accessToken)),
+              onPressed: _isLoading
+                  ? null
+                  : () async {
+                      final description = await _showDescriptionDialog();
+                      if (description == null) return;
+
+                      final accessToken = Supabase.instance.client.auth.currentSession?.accessToken;
+                      if (accessToken == null) return;
+
+                      await _runAnalysis(() => restClient.analyzeBodyLanguage(
+                          dogId: mockDogId,
+                          imageBytes: mockImageData,
+                          accessToken: accessToken,
+                          activityDescription: description));
+                    },
             ),
             ElevatedButton.icon(
               icon: const Icon(Icons.analytics),
               label: const Text('뇌파(EEG) 분석'),
-              onPressed: _isLoading ? null : () => _runAnalysis((accessToken) => restClient.analyzeEEG(dogId: mockDogId, eegBytes: mockEegData, accessToken: accessToken)),
+              onPressed: _isLoading
+                  ? null
+                  : () async {
+                      final description = await _showDescriptionDialog();
+                      if (description == null) return;
+
+                      final accessToken = Supabase.instance.client.auth.currentSession?.accessToken;
+                      if (accessToken == null) return;
+
+                      await _runAnalysis(() => restClient.analyzeEEG(
+                          dogId: mockDogId,
+                          eegBytes: mockEegData,
+                          accessToken: accessToken,
+                          activityDescription: description));
+                    },
             ),
           ],
         ),

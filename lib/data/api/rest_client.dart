@@ -1,5 +1,3 @@
-// lib/data/api/rest_client.dart
-
 import 'dart:typed_data';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
@@ -12,11 +10,7 @@ final restClientProvider = Provider<RestClient>((ref) => RestClient());
 
 class RestClient {
   String get _baseUrl {
-    // ✨ [수정] 릴리즈 빌드를 위해 컴파일 타임 변수를 우선적으로 사용하도록 변경합니다.
-    // 1. '--dart-define'으로 전달된 'API_BASE_URL'이 있는지 확인합니다.
     const String baseUrlFromEnv = String.fromEnvironment('API_BASE_URL');
-
-    // 2. 만약 있다면 그 값을 사용하고, 없다면 (개발 중이라면) .env 파일에서 읽어옵니다.
     final baseUrl = baseUrlFromEnv.isNotEmpty
         ? baseUrlFromEnv
         : dotenv.env['API_BASE_URL'];
@@ -36,6 +30,7 @@ class RestClient {
     required String fileName,
     required MediaType contentType,
     required String accessToken,
+    String? activityDescription,
   }) async {
     final url = Uri.parse('$_baseUrl/$endpoint');
     var request = http.MultipartRequest('POST', url);
@@ -43,6 +38,10 @@ class RestClient {
     request.headers['Authorization'] = 'Bearer $accessToken';
 
     request.fields['dog_id'] = dogId;
+    if (activityDescription != null && activityDescription.isNotEmpty) {
+      request.fields['activity_description'] = activityDescription;
+    }
+
     request.files.add(http.MultipartFile.fromBytes(
       fileField,
       bytes,
@@ -66,7 +65,7 @@ class RestClient {
             'Failed to analyze ($endpoint). Status: ${response.statusCode}. Detail: $detail');
       }
     } catch (e) {
-      print('Analysis error ($endpoint): $e');
+      // This is a generic catch block, rethrowing is appropriate here.
       rethrow;
     }
   }
@@ -75,6 +74,7 @@ class RestClient {
     required String dogId,
     required Uint8List audioBytes,
     required String accessToken,
+    String? activityDescription,
   }) {
     return _analyze(
       endpoint: 'ml/analyze_sound',
@@ -84,6 +84,7 @@ class RestClient {
       fileName: 'audio.wav',
       contentType: MediaType('audio', 'wav'),
       accessToken: accessToken,
+      activityDescription: activityDescription,
     );
   }
 
@@ -91,6 +92,7 @@ class RestClient {
     required String dogId,
     required Uint8List imageBytes,
     required String accessToken,
+    String? activityDescription,
   }) {
     return _analyze(
       endpoint: 'ml/analyze_facial_expression',
@@ -100,6 +102,7 @@ class RestClient {
       fileName: 'image.jpg',
       contentType: MediaType('image', 'jpeg'),
       accessToken: accessToken,
+      activityDescription: activityDescription,
     );
   }
 
@@ -107,6 +110,7 @@ class RestClient {
     required String dogId,
     required Uint8List imageBytes,
     required String accessToken,
+    String? activityDescription,
   }) {
     return _analyze(
       endpoint: 'ml/analyze_body_language',
@@ -116,6 +120,7 @@ class RestClient {
       fileName: 'image.jpg',
       contentType: MediaType('image', 'jpeg'),
       accessToken: accessToken,
+      activityDescription: activityDescription,
     );
   }
 
@@ -123,6 +128,7 @@ class RestClient {
     required String dogId,
     required Uint8List eegBytes,
     required String accessToken,
+    String? activityDescription,
   }) {
     return _analyze(
       endpoint: 'ml/analyze_eeg',
@@ -132,7 +138,40 @@ class RestClient {
       fileName: 'eeg.bin',
       contentType: MediaType('application', 'octet-stream'),
       accessToken: accessToken,
+      activityDescription: activityDescription,
     );
+  }
+
+  Future<Map<String, dynamic>> getDiaryEntry({
+    required String dogId,
+    required String diaryDate, // "YYYY-MM-DD" format
+    required String accessToken,
+  }) async {
+    final url = Uri.parse('$_baseUrl/diary/$dogId?diaryDate=$diaryDate');
+    try {
+      final response = await http.get(
+        url,
+        headers: {
+          'Authorization': 'Bearer $accessToken',
+        },
+      );
+      final responseBody = utf8.decode(response.bodyBytes);
+      if (response.statusCode == 200) {
+        return jsonDecode(responseBody);
+      } else {
+        String detail = 'No details from server.';
+        try {
+          final errorJson = jsonDecode(responseBody);
+          detail = errorJson['detail'] ?? responseBody;
+        } catch (_) {
+          detail = responseBody;
+        }
+        throw Exception(
+            'Failed to get diary entry. Status: ${response.statusCode}. Detail: $detail');
+      }
+    } catch (e) {
+      rethrow;
+    }
   }
 
   Future<String> getChatbotResponse({
@@ -145,7 +184,7 @@ class RestClient {
       final response = await http.post(
         url,
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8',
           'Authorization': 'Bearer $accessToken',
         },
         body: jsonEncode({'dog_id': dogId, 'query': userQuery}),
@@ -166,7 +205,6 @@ class RestClient {
             'Failed to get chatbot response. Status: ${response.statusCode}. Detail: $detail');
       }
     } catch (e) {
-      print('Chatbot API call error: $e');
       rethrow;
     }
   }
