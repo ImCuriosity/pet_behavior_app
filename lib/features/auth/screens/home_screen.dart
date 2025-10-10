@@ -204,8 +204,12 @@ class _AnalysisControlPanelState extends ConsumerState<AnalysisControlPanel> {
       final status = result['status'] ?? 'unknown';
 
       if (status == 'success') {
+        // ✨ [수정] 분석 점수를 다시 표시하도록 코드를 복원합니다.
+        final positiveScore = result['positive_score'] ?? 0.0;
+        final activeScore = result['active_score'] ?? 0.0;
         setState(() {
-          _result = '✅ 분석 성공! 그래프 데이터가 업데이트되었습니다.';
+          _result =
+              '✅ 분석 성공!\n- 긍정 점수: ${positiveScore.toStringAsFixed(2)}\n- 활동 점수: ${activeScore.toStringAsFixed(2)}';
         });
         ref.invalidate(analysisResultsProvider);
       } else {

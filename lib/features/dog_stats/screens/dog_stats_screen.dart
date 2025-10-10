@@ -40,9 +40,10 @@ final analysisResultsProvider =
   final now = DateTime.now();
   DateTime startDate;
   if (viewType == 'daily') {
-    startDate = DateTime(now.year, now.month, now.day); // Today 00:00
+    // ✨ [수정] '오늘' 보기의 기준을 '지난 24시간'으로 되돌립니다.
+    startDate = now.subtract(const Duration(hours: 24));
   } else { // weekly
-    startDate = now.subtract(Duration(days: now.weekday - 1)); // This week's Monday
+    startDate = now.subtract(Duration(days: now.weekday - 1));
     startDate = DateTime(startDate.year, startDate.month, startDate.day);
   }
 
@@ -104,7 +105,8 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
               },
               borderRadius: BorderRadius.circular(8.0),
               children: const [
-                Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Text('오늘')),
+                 // ✨ [수정] 텍스트는 '오늘'로 유지하지만, 실제 로직은 '24시간'으로 작동합니다.
+                Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Text('오늘 (24시간)')),
                 Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Text('주간')),
               ],
             ),
@@ -156,9 +158,9 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
     for (var result in results) {
       int groupIndex;
       if (_viewType == 'daily') {
-        groupIndex = result.createdAt.hour;
+        groupIndex = result.createdAt.toLocal().hour;
       } else { // weekly
-        groupIndex = result.createdAt.weekday; // 1: Monday, 7: Sunday
+        groupIndex = result.createdAt.toLocal().weekday; // 1: Monday, 7: Sunday
       }
 
       _groupedData.putIfAbsent(groupIndex, () => {});
