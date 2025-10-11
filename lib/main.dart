@@ -12,19 +12,17 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
 
 void main() async {
-  // ✨ [복원] 원래의 간단한 초기화 코드로 되돌립니다.
-
-  // 1. Flutter 바인딩 초기화
+  // 1. Flutter 엔진과 위젯 바인딩 초기화
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 2. .env 파일 로드 (루트의 .env를 찾습니다)
+  // 2. 환경 변수 파일(.env) 로드
   await dotenv.load(fileName: ".env");
 
-  // 3. intl 로케일 데이터 초기화
+  // 3. 날짜/시간 포맷(intl)을 한국 기준으로 초기화
   await initializeDateFormatting('ko_KR', null);
   Intl.defaultLocale = 'ko_KR';
 
-  // 4. Hive 초기화
+  // 4. 로컬 데이터베이스(Hive) 초기화
   await Hive.initFlutter('hive_data_cache');
   await Hive.openBox('gpsDataCache');
   await Hive.openBox('dailyLogsCache');
@@ -35,6 +33,7 @@ void main() async {
     anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
   );
 
+  // 6. 앱 실행
   runApp(
     const ProviderScope(
       child: MyApp(),

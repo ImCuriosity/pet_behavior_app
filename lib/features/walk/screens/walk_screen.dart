@@ -1,21 +1,437 @@
-
+import 'dart:async';
+import 'dart:convert';
+import 'dart:math' as math;
+import 'package:dognal1/data/api/rest_client.dart';
+import 'package:dognal1/features/walk/screens/walk_history_screen.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
+import 'package:location/location.dart';
+import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-class WalkScreen extends StatelessWidget {
+const String mockDogId = 'test_dog_id_001';
+
+enum WalkState { notStarted, walking, paused }
+
+// ✨ [수정] Riverpod의 ref를 사용하기 위해 ConsumerStatefulWidget으로 변경
+class WalkScreen extends ConsumerStatefulWidget {
   const WalkScreen({super.key});
+
+  @override
+  ConsumerState<WalkScreen> createState() => _WalkScreenState();
+}
+
+class _WalkScreenState extends ConsumerState<WalkScreen> {
+  // --- 상태 변수들 ---
+  WalkState _walkState = WalkState.notStarted;
+  GoogleMapController? _mapController;
+  final Location _location = Location();
+  StreamSubscription<LocationData>? _locationSubscription;
+
+  final Set<Polyline> _polylines = {};
+  final List<LatLng> _pathPoints = [];
+  LocationData? _currentLocation;
+
+  double _distance = 0.0;
+  Timer? _timer;
+  int _durationInSeconds = 0;
+  String _weatherInfo = '정보 없음';
+  DateTime? _startedAt; // ✨ [추가] 산책 시작 시간을 기록할 변수
+  bool _isSaving = false; // ✨ [추가] 저장 중 상태를 관리할 변수
+
+  @override
+  void initState() {
+    super.initState();
+    _requestPermission();
+  }
+
+  @override
+  void dispose() {
+    _locationSubscription?.cancel();
+    _timer?.cancel();
+    _mapController?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _requestPermission() async {
+    bool serviceEnabled = await _location.serviceEnabled();
+    if (!serviceEnabled) {
+      serviceEnabled = await _location.requestService();
+      if (!serviceEnabled) return;
+    }
+
+    PermissionStatus permissionGranted = await _location.hasPermission();
+    if (permissionGranted == PermissionStatus.denied) {
+      permissionGranted = await _location.requestPermission();
+      if (permissionGranted != PermissionStatus.granted) return;
+    }
+
+    _currentLocation = await _location.getLocation();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _getWeather() async {
+    if (_currentLocation == null) return;
+
+    final lat = _currentLocation!.latitude;
+    final lng = _currentLocation!.longitude;
+    final url = Uri.parse(
+        'https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lng&current_weather=true');
+
+    try {
+      final response = await http.get(url);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final currentWeather = data['current_weather'];
+        final temp = currentWeather['temperature'];
+        final weatherCode = currentWeather['weathercode'] as int;
+        final description = _getWeatherDescription(weatherCode);
+
+        if (mounted) {
+          setState(() {
+            _weatherInfo = '$description, ${temp.toStringAsFixed(1)}°C';
+          });
+        }
+      } else {
+        throw Exception('Failed to load weather data');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _weatherInfo = '날씨 실패';
+        });
+      }
+      debugPrint('날씨 정보를 가져오는 데 실패했습니다: $e');
+    }
+  }
+
+  String _getWeatherDescription(int code) {
+    switch (code) {
+      case 0: return '맑음';
+      case 1:
+      case 2:
+      case 3:
+        return '대체로 맑음';
+      case 45:
+      case 48:
+        return '안개';
+      case 51:
+      case 53:
+      case 55:
+        return '이슬비';
+      case 61:
+      case 63:
+      case 65:
+        return '비';
+      case 80:
+      case 81:
+      case 82:
+        return '소나기';
+      case 95:
+        return '뇌우';
+      case 71:
+      case 73:
+      case 75:
+      case 85:
+      case 86:
+        return '눈';
+      default:
+        return '정보 없음';
+    }
+  }
+
+  void _startWalk() {
+    if (_currentLocation == null) return;
+
+    _pathPoints.clear();
+    _polylines.clear();
+    _distance = 0.0;
+    _durationInSeconds = 0;
+    _weatherInfo = '정보 없음';
+    _startedAt = DateTime.now(); // ✨ [추가] 산책 시작 시간 기록
+
+    _getWeather();
+
+    _pathPoints.add(LatLng(_currentLocation!.latitude!, _currentLocation!.longitude!));
+
+    _locationSubscription = _location.onLocationChanged.listen((LocationData newLocation) {
+      if (!mounted || _walkState != WalkState.walking) return;
+      final newPoint = LatLng(newLocation.latitude!, newLocation.longitude!);
+      setState(() {
+        if (_pathPoints.isNotEmpty) {
+          final lastPoint = _pathPoints.last;
+          _distance += _calculateDistance(lastPoint, newPoint);
+        }
+        _pathPoints.add(newPoint);
+        _updatePolylines();
+        _currentLocation = newLocation;
+      });
+      _mapController?.animateCamera(CameraUpdate.newLatLng(newPoint));
+    });
+
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) return;
+      setState(() {
+        _durationInSeconds++;
+      });
+    });
+
+    setState(() {
+      _walkState = WalkState.walking;
+    });
+  }
+
+  void _pauseOrResumeWalk() {
+     if (_walkState == WalkState.walking) {
+      _timer?.cancel();
+      _locationSubscription?.pause();
+      setState(() {
+        _walkState = WalkState.paused;
+      });
+    } else if (_walkState == WalkState.paused) {
+      _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (!mounted) return;
+        setState(() {
+          _durationInSeconds++;
+        });
+      });
+      _locationSubscription?.resume();
+      setState(() {
+        _walkState = WalkState.walking;
+      });
+    }
+  }
+
+  // ✨ [수정] 산책 종료 및 기록 저장 로직 전체 구현
+  Future<void> _stopWalk() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('산책 종료'),
+        content: const Text('산책을 종료하고 기록하시겠습니까?\n마지막으로 강아지의 사진을 찍어주세요.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('취소')),
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('종료 및 촬영')),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    setState(() { _isSaving = true; });
+
+    _locationSubscription?.cancel();
+    _timer?.cancel();
+
+    try {
+      final picker = ImagePicker();
+      final XFile? image = await picker.pickImage(source: ImageSource.camera, imageQuality: 50);
+
+      Map<String, dynamic> finalEmotionAnalysis = {'status': 'no_image'};
+
+      if (image != null) {
+        final imageBytes = await image.readAsBytes();
+        final restClient = ref.read(restClientProvider);
+        final accessToken = Supabase.instance.client.auth.currentSession?.accessToken;
+
+        if (accessToken != null) {
+          finalEmotionAnalysis = await restClient.analyzeFacialExpression(
+            dogId: mockDogId,
+            imageBytes: imageBytes,
+            accessToken: accessToken,
+            activityDescription: '산책 종료 후 촬영',
+          );
+        }
+      }
+
+      final endedAt = DateTime.now();
+      final pathPointsForDb = _pathPoints.map((p) => {'lat': p.latitude, 'lng': p.longitude}).toList();
+
+      await ref.read(restClientProvider).saveWalkRecord(
+        dogId: mockDogId,
+        startedAt: _startedAt!,
+        endedAt: endedAt,
+        durationSeconds: _durationInSeconds,
+        distanceMeters: _distance,
+        weatherInfo: _weatherInfo,
+        pathPoints: pathPointsForDb,
+        finalEmotionAnalysis: finalEmotionAnalysis,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('🎉 산책 기록이 성공적으로 저장되었습니다!'), backgroundColor: Colors.green),
+        );
+        // 저장 후 기록 화면으로 이동
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (context) => const WalkHistoryScreen(dogId: mockDogId)),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('오류: 산책 기록 저장에 실패했습니다.\n$e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) {
+        // 성공/실패 여부와 관계없이 상태 초기화
+         _resetWalkState();
+      }
+    }
+  }
+
+  void _resetWalkState() {
+     setState(() {
+      _isSaving = false;
+      _walkState = WalkState.notStarted;
+      _pathPoints.clear();
+      _polylines.clear();
+      _distance = 0.0;
+      _durationInSeconds = 0;
+      _startedAt = null;
+    });
+  }
+
+  void _updatePolylines() {
+    _polylines.clear();
+    _polylines.add(Polyline(
+      polylineId: const PolylineId('walk_path'),
+      points: List.from(_pathPoints),
+      color: Colors.blueAccent,
+      width: 5,
+    ));
+  }
+
+  double _calculateDistance(LatLng start, LatLng end) {
+    const r = 6371e3;
+    final lat1 = start.latitude * math.pi / 180;
+    final lat2 = end.latitude * math.pi / 180;
+    final deltaLat = (end.latitude - start.latitude) * math.pi / 180;
+    final deltaLng = (end.longitude - start.longitude) * math.pi / 180;
+
+    final a = math.sin(deltaLat / 2) * math.sin(deltaLat / 2) +
+        math.cos(lat1) * math.cos(lat2) * math.sin(deltaLng / 2) * math.sin(deltaLng / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+
+    return r * c;
+  }
+
+  String _formatDuration(int seconds) {
+    final min = (seconds / 60).floor().toString().padLeft(2, '0');
+    final sec = (seconds % 60).toString().padLeft(2, '0');
+    return '$min:$sec';
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('산책가기'),
+        title: const Text('산책하기'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.history),
+            tooltip: '산책 기록 보기',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const WalkHistoryScreen(dogId: mockDogId),
+                ),
+              );
+            },
+          ),
+        ],
       ),
-      body: const Center(
-        child: Text(
-          '산책 기록을 시작합니다.',
-          style: TextStyle(fontSize: 20),
-        ),
+      body: Stack(
+        children: [
+          _currentLocation == null
+              ? const Center(child: CircularProgressIndicator())
+              : GoogleMap(
+                  initialCameraPosition: CameraPosition(
+                    target: LatLng(_currentLocation!.latitude!, _currentLocation!.longitude!),
+                    zoom: 16,
+                  ),
+                  onMapCreated: (controller) => _mapController = controller,
+                  myLocationEnabled: true,
+                  myLocationButtonEnabled: true,
+                  polylines: _polylines,
+                ),
+          Positioned(
+            bottom: 30,
+            left: 20,
+            right: 20,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Card(
+                  elevation: 8,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceAround,
+                          children: [
+                            _infoTile('거리', '${(_distance / 1000).toStringAsFixed(2)} km'),
+                            _infoTile('시간', _formatDuration(_durationInSeconds)),
+                            _infoTile('날씨', _weatherInfo),
+                          ],
+                        ),
+                        const SizedBox(height: 20),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            if (_walkState == WalkState.notStarted)
+                              ElevatedButton.icon(
+                                icon: const Icon(Icons.play_arrow),
+                                label: const Text('시작'),
+                                onPressed: _isSaving ? null : _startWalk, // 저장 중 비활성화
+                                style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12)),
+                              ),
+                            if (_walkState == WalkState.walking || _walkState == WalkState.paused)
+                              ElevatedButton.icon(
+                                icon: Icon(_walkState == WalkState.walking ? Icons.pause : Icons.play_arrow),
+                                label: Text(_walkState == WalkState.walking ? '중지' : '재개'),
+                                onPressed: _isSaving ? null : _pauseOrResumeWalk,
+                                style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12)),
+                              ),
+                            if (_walkState != WalkState.notStarted)
+                              ElevatedButton.icon(
+                                icon: const Icon(Icons.stop),
+                                label: const Text('종료'),
+                                onPressed: _isSaving ? null : _stopWalk,
+                                style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12)),
+                              ),
+                          ],
+                        )
+                      ],
+                    ),
+                  ),
+                ),
+                // ✨ [추가] 저장 중일 때 로딩 인디케이터 표시
+                if (_isSaving) const CircularProgressIndicator(),
+              ],
+            ),
+          ),
+        ],
       ),
+    );
+  }
+
+  Widget _infoTile(String title, String value) {
+    return Column(
+      children: [
+        Text(title, style: const TextStyle(color: Colors.grey, fontSize: 14)),
+        const SizedBox(height: 4),
+        Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+      ],
     );
   }
 }
