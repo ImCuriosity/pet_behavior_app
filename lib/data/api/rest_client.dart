@@ -65,7 +65,6 @@ class RestClient {
             'Failed to analyze ($endpoint). Status: ${response.statusCode}. Detail: $detail');
       }
     } catch (e) {
-      // This is a generic catch block, rethrowing is appropriate here.
       rethrow;
     }
   }
@@ -142,12 +141,16 @@ class RestClient {
     );
   }
 
+  // ✨ [수정] '다시쓰기' 기능을 위한 regenerate 파라미터 추가
   Future<Map<String, dynamic>> getDiaryEntry({
     required String dogId,
     required String diaryDate, // "YYYY-MM-DD" format
     required String accessToken,
+    bool regenerate = false, // 이 줄 다시 추가
+    // bool regenerate = false, // 이 줄 제거
   }) async {
-    final url = Uri.parse('$_baseUrl/diary/$dogId?diaryDate=$diaryDate');
+    // URL에서 regenerate 쿼리 파라미터를 제거합니다.
+    final url = Uri.parse('$_baseUrl/diary/$dogId?diaryDate=$diaryDate&regenerate=$regenerate');
     try {
       final response = await http.get(
         url,

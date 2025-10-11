@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown/flutter_markdown.dart'; // ✨ 1. flutter_markdown 패키지 import
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dognal1/data/api/rest_client.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+// ✨ [수정] 화면이 dogId를 받도록 변경
 class ChatbotModal extends ConsumerStatefulWidget {
-  const ChatbotModal({super.key});
+  final String dogId;
+  const ChatbotModal({super.key, required this.dogId});
 
   @override
   ConsumerState<ChatbotModal> createState() => _ChatbotModalState();
@@ -30,10 +32,9 @@ class _ChatbotModalState extends ConsumerState<ChatbotModal> {
       final accessToken = Supabase.instance.client.auth.currentSession?.accessToken;
       if (accessToken == null) throw Exception('Not authenticated');
 
-      const String mockDogId = 'test_dog_id_001';
-
+      // ✨ [수정] mockId 대신 전달받은 dogId 사용
       final response = await restClient.getChatbotResponse(
-        dogId: mockDogId,
+        dogId: widget.dogId,
         userQuery: text,
         accessToken: accessToken,
       );
@@ -79,13 +80,12 @@ class _ChatbotModalState extends ConsumerState<ChatbotModal> {
                         color: isUser ? Colors.blue[100] : Colors.grey[200],
                         borderRadius: BorderRadius.circular(16.0),
                       ),
-                      // ✨ 2. Text 위젯을 MarkdownBody 위젯으로 교체
                       child: isUser
-                          ? Text(message['text']!) // 사용자의 메시지는 그대로 Text 위젯 사용
-                          : MarkdownBody( // 챗봇의 메시지는 MarkdownBody로 렌더링
+                          ? Text(message['text']!)
+                          : MarkdownBody(
                               data: message['text']!,
                               styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
-                                p: Theme.of(context).textTheme.bodyMedium, // 일반 텍스트 스타일
+                                p: Theme.of(context).textTheme.bodyMedium,
                               ),
                             ),
                     ),
@@ -93,10 +93,11 @@ class _ChatbotModalState extends ConsumerState<ChatbotModal> {
                 },
               ),
             ),
-            if (_isLoading) const Padding(
-              padding: EdgeInsets.all(8.0),
-              child: CircularProgressIndicator(),
-            ),
+            if (_isLoading)
+              const Padding(
+                padding: EdgeInsets.all(8.0),
+                child: CircularProgressIndicator(),
+              ),
             const Divider(height: 1.0),
             _buildTextComposer(),
           ],

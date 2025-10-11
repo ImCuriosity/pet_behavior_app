@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:fl_chart/fl_chart.dart';
-import 'package:intl/intl.dart';
+
+const String mockDogId = 'test_dog_id_001'; // 임시 mock id
 
 class AnalysisResult {
   final DateTime createdAt;
@@ -20,8 +21,22 @@ class AnalysisResult {
   });
 
   factory AnalysisResult.fromMap(Map<String, dynamic> map) {
+    final dtString = map['created_at'] as String? ?? '';
+    DateTime parsedDate;
+    try {
+      var tempString = dtString.replaceFirst(' ', 'T');
+      if (tempString.endsWith('Z')) {
+        tempString = tempString.substring(0, tempString.length - 1) + '+00:00';
+      } else if (tempString.endsWith('+00')) {
+        tempString += ':00';
+      }
+      parsedDate = DateTime.parse(tempString);
+    } catch (e) {
+      parsedDate = DateTime.now();
+    }
+
     return AnalysisResult(
-      createdAt: DateTime.parse(map['created_at']),
+      createdAt: parsedDate,
       analysisType: map['analysis_type'] ?? 'unknown',
       positiveScore: map['positive_score']?.toDouble() ?? 0.0,
       activeScore: map['active_score']?.toDouble() ?? 0.0,
@@ -30,43 +45,58 @@ class AnalysisResult {
   }
 }
 
-final analysisResultsProvider =
-    FutureProvider.autoDispose.family<List<AnalysisResult>, String>((ref, viewType) async {
+// ✨ [수정] Provider family가 dogId와 viewType을 모두 받도록 변경합니다.
+final analysisResultsProvider = FutureProvider.autoDispose
+    .family<List<AnalysisResult>, ({String dogId, String viewType})>(
+        (ref, params) async {
   final supabase = Supabase.instance.client;
   final userId = supabase.auth.currentUser?.id;
 
   if (userId == null) throw Exception('User not logged in');
 
   final now = DateTime.now();
-  DateTime startDate;
-  if (viewType == 'daily') {
-    // ✨ [수정] '오늘' 보기의 기준을 '지난 24시간'으로 되돌립니다.
-    startDate = now.subtract(const Duration(hours: 24));
+  final kstOffset = const Duration(hours: 9);
+
+  DateTime queryStartUtc;
+  DateTime queryEndUtc;
+
+  final nowInKst = now.toUtc().add(kstOffset);
+
+  if (params.viewType == 'daily') {
+    final todayKstDate = DateTime.utc(nowInKst.year, nowInKst.month, nowInKst.day);
+    queryStartUtc = todayKstDate.subtract(kstOffset);
+    queryEndUtc = queryStartUtc.add(const Duration(days: 1));
   } else { // weekly
-    startDate = now.subtract(Duration(days: now.weekday - 1));
-    startDate = DateTime(startDate.year, startDate.month, startDate.day);
+    final daysToSubtract = nowInKst.weekday - 1;
+    final startOfWeekKstDate = DateTime.utc(nowInKst.year, nowInKst.month, nowInKst.day - daysToSubtract);
+    queryStartUtc = startOfWeekKstDate.subtract(kstOffset);
+    queryEndUtc = queryStartUtc.add(const Duration(days: 7));
   }
 
+  // ✨ [수정] dog_id 필터를 추가합니다.
   final response = await supabase
       .from('analysis_results')
       .select('created_at, analysis_type, positive_score, active_score, activity_description')
       .eq('user_id', userId)
-      .gte('created_at', startDate.toIso8601String())
+      .eq('dog_id', params.dogId)
+      .gte('created_at', queryStartUtc.toIso8601String())
+      .lt('created_at', queryEndUtc.toIso8601String())
       .order('created_at', ascending: true);
 
-  final data = response as List<dynamic>;
-  return data.map((item) => AnalysisResult.fromMap(item as Map<String, dynamic>)).toList();
+  return response.map((item) => AnalysisResult.fromMap(item as Map<String, dynamic>)).toList();
 });
 
+// ✨ [수정] 화면이 dogId를 받도록 변경
 class DogStatsScreen extends ConsumerStatefulWidget {
-  const DogStatsScreen({super.key});
+  final String dogId;
+  const DogStatsScreen({super.key, required this.dogId});
 
   @override
   ConsumerState<DogStatsScreen> createState() => _DogStatsScreenState();
 }
 
 class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
-  String _viewType = 'daily'; // 'daily' vs 'weekly'
+  String _viewType = 'daily';
 
   final Map<String, Color> _analysisTypeColors = {
     'eeg': Colors.blue,
@@ -85,7 +115,8 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final resultsAsyncValue = ref.watch(analysisResultsProvider(_viewType));
+    // ✨ [수정] provider를 호출할 때 dogId를 전달
+    final resultsAsyncValue = ref.watch(analysisResultsProvider((dogId: widget.dogId, viewType: _viewType)));
 
     return Scaffold(
       appBar: AppBar(
@@ -105,8 +136,7 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
               },
               borderRadius: BorderRadius.circular(8.0),
               children: const [
-                 // ✨ [수정] 텍스트는 '오늘'로 유지하지만, 실제 로직은 '24시간'으로 작동합니다.
-                Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Text('오늘 (24시간)')),
+                Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Text('오늘')),
                 Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Text('주간')),
               ],
             ),
@@ -154,13 +184,14 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
 
   void _groupData(List<AnalysisResult> results) {
     _groupedData = {};
-
+    final kst = const Duration(hours: 9);
     for (var result in results) {
       int groupIndex;
+      final createdAtKst = result.createdAt.toUtc().add(kst);
       if (_viewType == 'daily') {
-        groupIndex = result.createdAt.toLocal().hour;
-      } else { // weekly
-        groupIndex = result.createdAt.toLocal().weekday; // 1: Monday, 7: Sunday
+        groupIndex = createdAtKst.hour;
+      } else {
+        groupIndex = createdAtKst.weekday;
       }
 
       _groupedData.putIfAbsent(groupIndex, () => {});
@@ -174,7 +205,7 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
     const double barWidth = 8;
 
     if (_viewType == 'daily') {
-      for (int i = 0; i < 24; i++) { // 0h to 23h
+      for (int i = 0; i < 24; i++) {
         final scoresForGroup = _groupedData[i] ?? {};
         barGroups.add(BarChartGroupData(
           x: i,
@@ -187,8 +218,8 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
           }).toList(),
         ));
       }
-    } else { // weekly
-      for (int i = 1; i <= 7; i++) { // Monday(1) to Sunday(7)
+    } else {
+      for (int i = 1; i <= 7; i++) {
         final scoresForGroup = _groupedData[i] ?? {};
         barGroups.add(BarChartGroupData(
           x: i - 1,

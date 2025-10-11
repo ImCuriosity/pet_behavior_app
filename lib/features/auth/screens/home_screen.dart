@@ -10,6 +10,8 @@ import 'package:dognal1/features/diary/screens/diary_screen.dart';
 import 'package:dognal1/features/walk/screens/walk_screen.dart';
 import 'package:dognal1/features/chatbot/screens/chatbot_modal.dart';
 
+const String mockDogId = 'test_dog_id_001'; // 임시 mock id
+
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
@@ -84,7 +86,8 @@ class HomeScreen extends ConsumerWidget {
                     onPressed: () {
                       Navigator.push(
                         context,
-                        MaterialPageRoute(builder: (context) => const DiaryScreen()),
+                        // ✨ [수정] 화면 이동 시 dogId를 전달합니다.
+                        MaterialPageRoute(builder: (context) => const DiaryScreen(dogId: mockDogId)),
                       );
                     },
                   ),
@@ -106,7 +109,8 @@ class HomeScreen extends ConsumerWidget {
                     onPressed: () {
                       Navigator.push(
                         context,
-                        MaterialPageRoute(builder: (context) => const DogStatsScreen()),
+                        // ✨ [수정] 화면 이동 시 dogId를 전달합니다.
+                        MaterialPageRoute(builder: (context) => const DogStatsScreen(dogId: mockDogId)),
                       );
                     },
                   ),
@@ -122,7 +126,8 @@ class HomeScreen extends ConsumerWidget {
             context: context,
             isScrollControlled: true,
             builder: (BuildContext context) {
-              return const ChatbotModal();
+              // ✨ [수정] 챗봇 모달에 dogId를 전달합니다.
+              return const ChatbotModal(dogId: mockDogId);
             },
           );
         },
@@ -204,14 +209,15 @@ class _AnalysisControlPanelState extends ConsumerState<AnalysisControlPanel> {
       final status = result['status'] ?? 'unknown';
 
       if (status == 'success') {
-        // ✨ [수정] 분석 점수를 다시 표시하도록 코드를 복원합니다.
         final positiveScore = result['positive_score'] ?? 0.0;
         final activeScore = result['active_score'] ?? 0.0;
         setState(() {
           _result =
               '✅ 분석 성공!\n- 긍정 점수: ${positiveScore.toStringAsFixed(2)}\n- 활동 점수: ${activeScore.toStringAsFixed(2)}';
         });
-        ref.invalidate(analysisResultsProvider);
+        // ✨ [수정] provider를 무효화할 때 dogId와 viewType을 모두 전달하여, 정확한 데이터만 새로고침합니다.
+        ref.invalidate(analysisResultsProvider((dogId: mockDogId, viewType: 'daily')));
+        ref.invalidate(analysisResultsProvider((dogId: mockDogId, viewType: 'weekly')));
       } else {
         setState(() {
           _result = '❌ 서버 응답 오류: $status';
@@ -230,7 +236,6 @@ class _AnalysisControlPanelState extends ConsumerState<AnalysisControlPanel> {
   @override
   Widget build(BuildContext context) {
     final restClient = ref.watch(restClientProvider);
-    const String mockDogId = 'test_dog_id_001';
     final mockAudioData = Uint8List.fromList(List.generate(1024, (i) => i % 256));
     final mockImageData = Uint8List.fromList(List.generate(1024 * 5, (i) => i % 256));
     final mockEegData = Uint8List.fromList(List.generate(1024 * 2, (i) => i % 256));

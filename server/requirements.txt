@@ -5,3 +5,4 @@ python-jose[cryptography]
 google-cloud-aiplatform
 python-multipart
 gunicorn
+python-dotenv
