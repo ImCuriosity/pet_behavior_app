@@ -1,3 +1,4 @@
+import 'package:dognal1/data/api/rest_client.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -38,14 +39,14 @@ class AnalysisResult {
     return AnalysisResult(
       createdAt: parsedDate,
       analysisType: map['analysis_type'] ?? 'unknown',
-      positiveScore: map['positive_score']?.toDouble() ?? 0.0,
-      activeScore: map['active_score']?.toDouble() ?? 0.0,
+      positiveScore: (map['positive_score'] as num?)?.toDouble() ?? 0.0,
+      activeScore: (map['active_score'] as num?)?.toDouble() ?? 0.0,
       activityDescription: map['activity_description'],
     );
   }
 }
 
-// ✨ [수정] Provider family가 dogId와 viewType을 모두 받도록 변경합니다.
+// ✨ [수정] walk_records와 analysis_results를 통합하여 조회하는 Provider
 final analysisResultsProvider = FutureProvider.autoDispose
     .family<List<AnalysisResult>, ({String dogId, String viewType})>(
         (ref, params) async {
@@ -56,37 +57,73 @@ final analysisResultsProvider = FutureProvider.autoDispose
 
   final now = DateTime.now();
   final kstOffset = const Duration(hours: 9);
+  final nowInKst = now.toUtc().add(kstOffset);
 
   DateTime queryStartUtc;
   DateTime queryEndUtc;
-
-  final nowInKst = now.toUtc().add(kstOffset);
 
   if (params.viewType == 'daily') {
     final todayKstDate = DateTime.utc(nowInKst.year, nowInKst.month, nowInKst.day);
     queryStartUtc = todayKstDate.subtract(kstOffset);
     queryEndUtc = queryStartUtc.add(const Duration(days: 1));
   } else { // weekly
-    final daysToSubtract = nowInKst.weekday - 1;
+    final daysToSubtract = nowInKst.weekday - 1; // Monday is 1, Sunday is 7
     final startOfWeekKstDate = DateTime.utc(nowInKst.year, nowInKst.month, nowInKst.day - daysToSubtract);
     queryStartUtc = startOfWeekKstDate.subtract(kstOffset);
     queryEndUtc = queryStartUtc.add(const Duration(days: 7));
   }
 
-  // ✨ [수정] dog_id 필터를 추가합니다.
-  final response = await supabase
+  // 1. ML 분석 결과 조회
+  final mlResultsFuture = supabase
       .from('analysis_results')
       .select('created_at, analysis_type, positive_score, active_score, activity_description')
       .eq('user_id', userId)
       .eq('dog_id', params.dogId)
       .gte('created_at', queryStartUtc.toIso8601String())
-      .lt('created_at', queryEndUtc.toIso8601String())
-      .order('created_at', ascending: true);
+      .lt('created_at', queryEndUtc.toIso8601String());
 
-  return response.map((item) => AnalysisResult.fromMap(item as Map<String, dynamic>)).toList();
+  // 2. 산책 기록 조회
+  final walkRecordsFuture = supabase
+      .from('walk_records')
+      .select()
+      .eq('user_id', userId)
+      .eq('dog_id', params.dogId)
+      .gte('ended_at', queryStartUtc.toIso8601String())
+      .lt('ended_at', queryEndUtc.toIso8601String());
+
+  // 두 쿼리를 병렬로 실행
+  final [mlResponse, walkResponse] = await Future.wait([mlResultsFuture, walkRecordsFuture]);
+
+  // 3. ML 분석 결과를 AnalysisResult 리스트로 변환
+  final mlResults = (mlResponse as List).map((item) => AnalysisResult.fromMap(item)).toList();
+
+  // 4. 산책 기록을 AnalysisResult 리스트로 변환
+  final walkResults = (walkResponse as List).map((item) {
+    final record = WalkRecord.fromMap(item);
+    final distance = record.distanceMeters ?? 0.0;
+    final emotionAnalysis = record.finalEmotionAnalysis;
+
+    final activeScore = (distance / 1500.0).clamp(0.0, 1.0); // 1.5km = 1.0점
+    final positiveScore = (emotionAnalysis != null && emotionAnalysis['status'] == 'success')
+        ? (emotionAnalysis['positive_score'] as num).toDouble()
+        : 0.5; // 분석 실패 또는 없으면 중간값
+
+    return AnalysisResult(
+      createdAt: record.endedAt ?? record.createdAt, 
+      analysisType: 'walk',
+      positiveScore: positiveScore,
+      activeScore: activeScore,
+      activityDescription: '${(distance / 1000).toStringAsFixed(2)}km 산책',
+    );
+  }).toList();
+
+  // 5. 두 리스트를 합치고 시간순으로 정렬
+  final combinedResults = [...mlResults, ...walkResults];
+  combinedResults.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+  return combinedResults;
 });
 
-// ✨ [수정] 화면이 dogId를 받도록 변경
 class DogStatsScreen extends ConsumerStatefulWidget {
   final String dogId;
   const DogStatsScreen({super.key, required this.dogId});
@@ -98,30 +135,30 @@ class DogStatsScreen extends ConsumerStatefulWidget {
 class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
   String _viewType = 'daily';
 
+  // ✨ [수정] 'walk' 타입을 범례에 추가
   final Map<String, Color> _analysisTypeColors = {
     'eeg': Colors.blue,
     'sound': Colors.green,
     'body_language': Colors.orange,
     'facial_expression': Colors.purple,
+    'walk': Colors.teal, // 산책 색상 추가
   };
   final Map<String, String> _analysisTypeNames = {
     'eeg': '뇌파',
     'sound': '음성',
     'body_language': '몸짓',
     'facial_expression': '표정',
+    'walk': '산책', // 산책 이름 추가
   };
 
   Map<int, Map<String, List<AnalysisResult>>> _groupedData = {};
 
   @override
   Widget build(BuildContext context) {
-    // ✨ [수정] provider를 호출할 때 dogId를 전달
     final resultsAsyncValue = ref.watch(analysisResultsProvider((dogId: widget.dogId, viewType: _viewType)));
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('감정 분석 리포트'),
-      ),
+      appBar: AppBar(title: const Text('감정 분석 리포트')),
       body: Column(
         children: [
           Padding(
@@ -130,9 +167,7 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
               isSelected: [_viewType == 'daily', _viewType == 'weekly'],
               onPressed: (index) {
                 if (!mounted) return;
-                setState(() {
-                  _viewType = index == 0 ? 'daily' : 'weekly';
-                });
+                setState(() { _viewType = index == 0 ? 'daily' : 'weekly'; });
               },
               borderRadius: BorderRadius.circular(8.0),
               children: const [
@@ -170,12 +205,14 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
       runSpacing: 8,
       alignment: WrapAlignment.center,
       children: _analysisTypeColors.entries.map((entry) {
+        final typeName = _analysisTypeNames[entry.key] ?? entry.key;
+        if (typeName.isEmpty) return const SizedBox.shrink(); // 이름 없는 타입은 숨김
         return Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(width: 16, height: 16, color: entry.value),
             const SizedBox(width: 8),
-            Text(_analysisTypeNames[entry.key] ?? entry.key),
+            Text(typeName),
           ],
         );
       }).toList(),
@@ -201,8 +238,10 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
   }
 
   BarChartData _buildBarChartData() {
-    final List<BarChartGroupData> barGroups = [];
+    // ... (차트 데이터 생성 로직은 거의 동일, 타입이 동적으로 처리됨)
+     final List<BarChartGroupData> barGroups = [];
     const double barWidth = 8;
+    final availableTypes = _analysisTypeColors.keys.toList();
 
     if (_viewType == 'daily') {
       for (int i = 0; i < 24; i++) {
@@ -210,7 +249,7 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
         barGroups.add(BarChartGroupData(
           x: i,
           barsSpace: 4,
-          barRods: _analysisTypeColors.keys.map((type) {
+          barRods: availableTypes.map((type) {
             final scores = scoresForGroup[type]?.map((r) => r.positiveScore).toList() ?? [];
             final averageScore = scores.isEmpty ? 0.0 : scores.reduce((a, b) => a + b) / scores.length;
             return BarChartRodData(
@@ -218,13 +257,13 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
           }).toList(),
         ));
       }
-    } else {
+    } else { // weekly
       for (int i = 1; i <= 7; i++) {
         final scoresForGroup = _groupedData[i] ?? {};
         barGroups.add(BarChartGroupData(
           x: i - 1,
           barsSpace: 4,
-          barRods: _analysisTypeColors.keys.map((type) {
+          barRods: availableTypes.map((type) {
             final scores = scoresForGroup[type]?.map((r) => r.positiveScore).toList() ?? [];
             final averageScore = scores.isEmpty ? 0.0 : scores.reduce((a, b) => a + b) / scores.length;
             return BarChartRodData(
@@ -273,7 +312,7 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
         touchTooltipData: BarTouchTooltipData(
           getTooltipColor: (_) => Colors.blueGrey,
           getTooltipItem: (group, groupIndex, rod, rodIndex) {
-            final type = _analysisTypeColors.keys.elementAt(rodIndex);
+            final type = availableTypes[rodIndex];
             final groupKey = _viewType == 'daily' ? group.x : (group.x + 1);
             final resultsForBar = _groupedData[groupKey]?[type] ?? [];
             final description = resultsForBar

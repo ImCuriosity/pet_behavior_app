@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:dognal1/data/api/rest_client.dart';
+import 'package:dognal1/features/dog_stats/screens/dog_stats_screen.dart'; // Provider invalidate를 위해 import
 import 'package:dognal1/features/walk/screens/walk_history_screen.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -17,7 +18,6 @@ const String mockDogId = 'test_dog_id_001';
 
 enum WalkState { notStarted, walking, paused }
 
-// ✨ [수정] Riverpod의 ref를 사용하기 위해 ConsumerStatefulWidget으로 변경
 class WalkScreen extends ConsumerStatefulWidget {
   const WalkScreen({super.key});
 
@@ -26,7 +26,6 @@ class WalkScreen extends ConsumerStatefulWidget {
 }
 
 class _WalkScreenState extends ConsumerState<WalkScreen> {
-  // --- 상태 변수들 ---
   WalkState _walkState = WalkState.notStarted;
   GoogleMapController? _mapController;
   final Location _location = Location();
@@ -40,8 +39,8 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
   Timer? _timer;
   int _durationInSeconds = 0;
   String _weatherInfo = '정보 없음';
-  DateTime? _startedAt; // ✨ [추가] 산책 시작 시간을 기록할 변수
-  bool _isSaving = false; // ✨ [추가] 저장 중 상태를 관리할 변수
+  DateTime? _startedAt;
+  bool _isSaving = false;
 
   @override
   void initState() {
@@ -109,38 +108,17 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
     }
   }
 
-  String _getWeatherDescription(int code) {
+    String _getWeatherDescription(int code) {
     switch (code) {
       case 0: return '맑음';
-      case 1:
-      case 2:
-      case 3:
-        return '대체로 맑음';
-      case 45:
-      case 48:
-        return '안개';
-      case 51:
-      case 53:
-      case 55:
-        return '이슬비';
-      case 61:
-      case 63:
-      case 65:
-        return '비';
-      case 80:
-      case 81:
-      case 82:
-        return '소나기';
-      case 95:
-        return '뇌우';
-      case 71:
-      case 73:
-      case 75:
-      case 85:
-      case 86:
-        return '눈';
-      default:
-        return '정보 없음';
+      case 1: case 2: case 3: return '대체로 맑음';
+      case 45: case 48: return '안개';
+      case 51: case 53: case 55: return '이슬비';
+      case 61: case 63: case 65: return '비';
+      case 80: case 81: case 82: return '소나기';
+      case 95: return '뇌우';
+      case 71: case 73: case 75: case 85: case 86: return '눈';
+      default: return '정보 없음';
     }
   }
 
@@ -152,11 +130,12 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
     _distance = 0.0;
     _durationInSeconds = 0;
     _weatherInfo = '정보 없음';
-    _startedAt = DateTime.now(); // ✨ [추가] 산책 시작 시간 기록
+    _startedAt = DateTime.now();
 
     _getWeather();
 
-    _pathPoints.add(LatLng(_currentLocation!.latitude!, _currentLocation!.longitude!));
+    final startPoint = LatLng(_currentLocation!.latitude!, _currentLocation!.longitude!);
+    _pathPoints.add(startPoint);
 
     _locationSubscription = _location.onLocationChanged.listen((LocationData newLocation) {
       if (!mounted || _walkState != WalkState.walking) return;
@@ -186,7 +165,7 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
   }
 
   void _pauseOrResumeWalk() {
-     if (_walkState == WalkState.walking) {
+    if (_walkState == WalkState.walking) {
       _timer?.cancel();
       _locationSubscription?.pause();
       setState(() {
@@ -206,7 +185,6 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
     }
   }
 
-  // ✨ [수정] 산책 종료 및 기록 저장 로직 전체 구현
   Future<void> _stopWalk() async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -262,15 +240,18 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
         finalEmotionAnalysis: finalEmotionAnalysis,
       );
 
+      // ✨ [수정] 다마고치 및 그래프 데이터 제공자를 무효화하여 새로고침
+      ref.invalidate(analysisResultsProvider((dogId: mockDogId, viewType: 'daily')));
+      ref.invalidate(analysisResultsProvider((dogId: mockDogId, viewType: 'weekly')));
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('🎉 산책 기록이 성공적으로 저장되었습니다!'), backgroundColor: Colors.green),
+          const SnackBar(content: Text('🎉 산책 완료! 홈 화면에서 업데이트된 스탯을 확인하세요!'), backgroundColor: Colors.green),
         );
-        // 저장 후 기록 화면으로 이동
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const WalkHistoryScreen(dogId: mockDogId)),
-        );
+        // ✨ [수정] 홈 화면으로 돌아가기
+        Navigator.of(context).pop();
       }
+
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -279,14 +260,14 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
       }
     } finally {
       if (mounted) {
-        // 성공/실패 여부와 관계없이 상태 초기화
-         _resetWalkState();
+        _resetWalkState();
       }
     }
   }
 
+
   void _resetWalkState() {
-     setState(() {
+    setState(() {
       _isSaving = false;
       _walkState = WalkState.notStarted;
       _pathPoints.clear();
@@ -298,7 +279,6 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
   }
 
   void _updatePolylines() {
-    _polylines.clear();
     _polylines.add(Polyline(
       polylineId: const PolylineId('walk_path'),
       points: List.from(_pathPoints),
@@ -308,7 +288,7 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
   }
 
   double _calculateDistance(LatLng start, LatLng end) {
-    const r = 6371e3;
+    const r = 6371e3; // 지구 반지름 (미터)
     final lat1 = start.latitude * math.pi / 180;
     final lat2 = end.latitude * math.pi / 180;
     final deltaLat = (end.latitude - start.latitude) * math.pi / 180;
@@ -318,7 +298,7 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
         math.cos(lat1) * math.cos(lat2) * math.sin(deltaLng / 2) * math.sin(deltaLng / 2);
     final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
 
-    return r * c;
+    return r * c; 
   }
 
   String _formatDuration(int seconds) {
@@ -392,7 +372,7 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
                               ElevatedButton.icon(
                                 icon: const Icon(Icons.play_arrow),
                                 label: const Text('시작'),
-                                onPressed: _isSaving ? null : _startWalk, // 저장 중 비활성화
+                                onPressed: _isSaving ? null : _startWalk,
                                 style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12)),
                               ),
                             if (_walkState == WalkState.walking || _walkState == WalkState.paused)
@@ -415,7 +395,6 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
                     ),
                   ),
                 ),
-                // ✨ [추가] 저장 중일 때 로딩 인디케이터 표시
                 if (_isSaving) const CircularProgressIndicator(),
               ],
             ),

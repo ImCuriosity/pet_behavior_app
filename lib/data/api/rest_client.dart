@@ -9,7 +9,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 final restClientProvider = Provider<RestClient>((ref) => RestClient());
 
-// ✨ [추가] 산책 기록 데이터를 담을 모델 클래스
 class WalkRecord {
   final String id;
   final String userId;
@@ -19,7 +18,7 @@ class WalkRecord {
   final int? durationSeconds;
   final double? distanceMeters;
   final String? weatherInfo;
-  final List<Map<String, double>>? pathPoints; // e.g., [{'lat': 37.5, 'lng': 127.0}]
+  final List<Map<String, double>>? pathPoints;
   final Map<String, dynamic>? finalEmotionAnalysis;
   final DateTime createdAt;
 
@@ -72,7 +71,6 @@ class RestClient {
     return '$baseUrl/api/v1';
   }
 
-  // Supabase 클라이언트 인스턴스에 더 쉽게 접근하기 위해 getter를 추가합니다.
   SupabaseClient get _supabase => Supabase.instance.client;
 
   Future<Map<String, dynamic>> _analyze({
@@ -85,6 +83,7 @@ class RestClient {
     required String accessToken,
     String? activityDescription,
   }) async {
+    // ✨ [수정] _baseUrl을 사용하도록 변경
     final url = Uri.parse('$_baseUrl/$endpoint');
     var request = http.MultipartRequest('POST', url);
 
@@ -200,6 +199,7 @@ class RestClient {
     required String accessToken,
     bool regenerate = false,
   }) async {
+    // ✨ [수정] _baseUrl을 사용하도록 변경
     final url = Uri.parse('$_baseUrl/diary/$dogId?diaryDate=$diaryDate&regenerate=$regenerate');
     try {
       final response = await http.get(
@@ -232,6 +232,7 @@ class RestClient {
     required String userQuery,
     required String accessToken,
   }) async {
+    // ✨ [수정] _baseUrl을 사용하도록 변경
     final url = Uri.parse('$_baseUrl/chatbot/query');
     try {
       final response = await http.post(
@@ -262,7 +263,6 @@ class RestClient {
     }
   }
 
-  // ✨ [추가] 산책 기록을 Supabase에 저장하는 함수
   Future<void> saveWalkRecord({
     required String dogId,
     required DateTime startedAt,
@@ -289,7 +289,6 @@ class RestClient {
         'final_emotion_analysis': finalEmotionAnalysis,
       });
     } catch (e) {
-      // PostgREST 에러를 더 자세히 출력
       if (e is PostgrestException) {
         throw Exception('Failed to save walk record: ${e.message} (Code: ${e.code})');
       }
@@ -297,20 +296,46 @@ class RestClient {
     }
   }
 
-  // ✨ [추가] 특정 강아지의 산책 기록 목록을 가져오는 함수
   Future<List<WalkRecord>> getWalkHistory(String dogId) async {
     try {
       final response = await _supabase
           .from('walk_records')
           .select()
           .eq('dog_id', dogId)
-          .order('started_at', ascending: false) // 최신순으로 정렬
-          .limit(20); // 최근 20개만 가져오기
+          .order('started_at', ascending: false)
+          .limit(20);
 
       return response.map((item) => WalkRecord.fromMap(item)).toList();
     } catch (e) {
       if (e is PostgrestException) {
         throw Exception('Failed to get walk history: ${e.message}');
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> saveManualAnalysisResult({
+    required String dogId,
+    required String analysisType, 
+    required double positiveScore,
+    required double activeScore,
+    required String activityDescription,
+  }) async {
+    final user = _supabase.auth.currentUser;
+    if (user == null) throw Exception('User not logged in');
+
+    try {
+      await _supabase.from('analysis_results').insert({
+        'user_id': user.id,
+        'dog_id': dogId,
+        'analysis_type': analysisType,
+        'positive_score': positiveScore,
+        'active_score': activeScore,
+        'activity_description': activityDescription,
+      });
+    } catch (e) {
+      if (e is PostgrestException) {
+        throw Exception('Failed to save manual analysis result: ${e.message} (Code: ${e.code})');
       }
       rethrow;
     }

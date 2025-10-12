@@ -21,20 +21,16 @@ dependencies:
   flutter_riverpod: ^2.5.0
   riverpod_annotation: ^2.3.5
   rive: ^0.13.0
-  google_maps_flutter: ^2.6.1       # 구글 지도
-  location: ^6.0.2                  # GPS 위치 정보
-  weather: ^3.1.1                   # 날씨 정보
-  image_picker: ^1.1.2              # 사진 촬영/선택
-  geocoding: ^3.0.0                 # 좌표-주소 변환
+  google_maps_flutter: ^2.6.1
+  location: ^6.0.2
+  weather: ^3.1.1
+  image_picker: ^1.1.2
+  geocoding: ^3.0.0
   google_maps_flutter_web: ^0.5.5
-
-
-  # ✨ [추가] 그래프 및 날짜/시간 처리를 위한 라이브러리
   fl_chart: ^0.68.0
   intl: ^0.19.0
-
-  # ✨ [추가] 마크다운 렌더링을 위한 라이브러리
   flutter_markdown: ^0.7.1
+  flame: ^1.18.0
 
 dev_dependencies:
   flutter_test:
@@ -45,6 +41,7 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  # ✨ [복원] assets/ 폴더 대신 원래대로 루트의 .env 파일을 지정합니다.
   assets:
     - .env
+    # ✨ [수정] 사용자가 요청한 표준 에셋 경로로 수정
+    - assets/images/

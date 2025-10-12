@@ -9,6 +9,7 @@ import 'package:dognal1/data/api/rest_client.dart';
 import 'package:dognal1/features/diary/screens/diary_screen.dart';
 import 'package:dognal1/features/walk/screens/walk_screen.dart';
 import 'package:dognal1/features/chatbot/screens/chatbot_modal.dart';
+import 'package:dognal1/features/tamagotchi/screens/tamagotchi_screen.dart'; // ✨ [추가] 다마고치 화면 임포트
 
 const String mockDogId = 'test_dog_id_001'; // 임시 mock id
 
@@ -43,35 +44,32 @@ class HomeScreen extends ConsumerWidget {
           ),
         ],
       ),
-      body: Padding(
+      body: SingleChildScrollView( // ⭐️ [수정 1] 전체 화면을 SingleChildScrollView로 감쌈
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            Expanded(
-              flex: 4,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey[400]!),
-                ),
-                child: const Center(
-                  child: Text(
-                    '(강아지 다마고치 공간)',
-                    style: TextStyle(fontSize: 22, color: Colors.black54, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ),
+            // ⭐️ [수정 2] Expanded 대신 Card로 감싸고 고정된 비율을 제거
+            // TamagotchiScreen이 자체 높이를 기반으로 배치되도록 함
+            const Card(
+              elevation: 0, // TamagotchiScreen 내부에서 그림자 처리했으므로 제거
+              margin: EdgeInsets.zero,
+              child: TamagotchiScreen(dogId: mockDogId),
             ),
+
             const SizedBox(height: 20),
-            const Expanded(
-              flex: 3,
-              child: SingleChildScrollView(
-                child: AnalysisControlPanel(),
-              ),
+
+            // ⭐️ [수정 3] Expanded 대신 Column으로 감싸고 AnalysisControlPanel 배치
+            const Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                AnalysisControlPanel(),
+              ],
             ),
-            const Spacer(),
+
+            // ⭐️ [수정 4] Spacer 대신 SizedBox를 사용하여 고정 간격 확보
+            const SizedBox(height: 30),
+
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 10.0),
               child: Wrap(
@@ -321,8 +319,8 @@ class _AnalysisControlPanelState extends ConsumerState<AnalysisControlPanel> {
                     },
             ),
             ElevatedButton.icon(
-              icon: const Icon(Icons.analytics),
-              label: const Text('뇌파(EEG) 분석'),
+              icon: const Icon(Icons.waves),
+              label: const Text('뇌파 분석'),
               onPressed: _isLoading
                   ? null
                   : () async {
