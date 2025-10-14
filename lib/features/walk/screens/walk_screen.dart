@@ -14,12 +14,15 @@ import 'package:location/location.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-const String mockDogId = 'test_dog_id_001';
-
 enum WalkState { notStarted, walking, paused }
 
 class WalkScreen extends ConsumerStatefulWidget {
-  const WalkScreen({super.key});
+  final String dogId; // dogId를 받기 위한 변수 추가
+
+  const WalkScreen({
+    super.key,
+    required this.dogId, // 생성자에 dogId 추가
+  });
 
   @override
   ConsumerState<WalkScreen> createState() => _WalkScreenState();
@@ -218,7 +221,7 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
 
         if (accessToken != null) {
           finalEmotionAnalysis = await restClient.analyzeFacialExpression(
-            dogId: mockDogId,
+            dogId: widget.dogId, // mockDogId 대신 widget.dogId 사용
             imageBytes: imageBytes,
             accessToken: accessToken,
             activityDescription: '산책 종료 후 촬영',
@@ -230,7 +233,7 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
       final pathPointsForDb = _pathPoints.map((p) => {'lat': p.latitude, 'lng': p.longitude}).toList();
 
       await ref.read(restClientProvider).saveWalkRecord(
-        dogId: mockDogId,
+        dogId: widget.dogId, // mockDogId 대신 widget.dogId 사용
         startedAt: _startedAt!,
         endedAt: endedAt,
         durationSeconds: _durationInSeconds,
@@ -241,8 +244,8 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
       );
 
       // ✨ [수정] 다마고치 및 그래프 데이터 제공자를 무효화하여 새로고침
-      ref.invalidate(analysisResultsProvider((dogId: mockDogId, viewType: 'daily')));
-      ref.invalidate(analysisResultsProvider((dogId: mockDogId, viewType: 'weekly')));
+      ref.invalidate(analysisResultsProvider((dogId: widget.dogId, viewType: 'daily'))); // mockDogId 대신 widget.dogId 사용
+      ref.invalidate(analysisResultsProvider((dogId: widget.dogId, viewType: 'weekly'))); // mockDogId 대신 widget.dogId 사용
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -320,7 +323,7 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const WalkHistoryScreen(dogId: mockDogId),
+                  builder: (context) => WalkHistoryScreen(dogId: widget.dogId), // mockDogId 대신 widget.dogId 사용
                 ),
               );
             },

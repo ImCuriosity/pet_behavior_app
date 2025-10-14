@@ -1,14 +1,11 @@
-import 'dart:math'; // Random 클래스를 사용하기 위해 import
+import 'dart:math';
 import 'package:flame/components.dart';
 import 'package:flame/game.dart';
 import 'package:flame/sprite.dart';
-import 'package:flame/events.dart'; // TapCallbacks를 사용하기 위해 import
+import 'package:flame/events.dart';
 import 'package:flutter/material.dart';
 
-// 강아지의 현재 상태를 나타내는 enum
 enum DogState { idle, happy, sad, energetic, tired }
-
-// 클릭했을 때 재생할 수 있는 추가 모션들을 정의하는 enum
 enum InteractiveMotion { bark, attack, jump, dash }
 
 class DogAvatar extends FlameGame with TapCallbacks {
@@ -17,17 +14,12 @@ class DogAvatar extends FlameGame with TapCallbacks {
 
   DogAvatar({required this.positiveScore, required this.activeScore});
 
-  // ✨ [핵심 수정] 게임 배경색을 흰색(Colors.white)으로 설정합니다.
-  @override
-  Color backgroundColor() => const Color(0xFFFFFFFF); // 또는 Colors.white.toRgbColor().toColor()
-
   late SpriteAnimationComponent _dogComponent;
+  late SpriteComponent _backgroundComponent; // ✨ [추가] 배경 컴포넌트
   late DogState currentState;
   bool _isPerformingInteractiveMotion = false;
   late SpriteAnimation _originalAnimation;
 
-  // ✨ [수정] 업로드된 에셋을 기반으로 상호작용 모션 맵을 확장했습니다.
-  // pubspec.yaml에 파일들이 assets/images/ 경로에 추가되었는지 확인해주세요.
   final Map<InteractiveMotion, ({String imagePath, int frameCount, double stepTime})> _interactiveMotions = {
     InteractiveMotion.bark: (imagePath: 'dog_bark_strip6.png', frameCount: 6, stepTime: 0.1),
     InteractiveMotion.attack: (imagePath: 'dog_attack_strip7.png', frameCount: 7, stepTime: 0.1),
@@ -36,17 +28,31 @@ class DogAvatar extends FlameGame with TapCallbacks {
   };
 
   @override
+  Color backgroundColor() => Colors.transparent; // ✨ [수정] 배경색을 투명으로 설정하여 이미지가 보이도록 함
+
+  @override
   Future<void> onLoad() async {
     await super.onLoad();
+
+    // ✨ [추가] 배경 이미지 로드 및 추가
+    final backgroundImage = await images.load('cloud_morning_normal.png');
+    _backgroundComponent = SpriteComponent.fromImage(
+      backgroundImage,
+      size: size, // 게임 화면 전체 크기에 맞춤
+      position: Vector2.zero(),
+    );
+    _backgroundComponent.priority = -1; // 강아지 애니메이션보다 뒤에 렌더링되도록 우선순위 설정
+    add(_backgroundComponent);
+
     currentState = _getStateFromScores();
     _dogComponent = await _loadAnimation(currentState);
     add(_dogComponent);
     _dogComponent.position = size / 2;
+    _dogComponent.priority = 0; // 강아지는 배경보다 위에 렌더링되도록 설정
 
     _originalAnimation = _dogComponent.animation!;
   }
 
-  // ... _getStateFromScores, _loadAnimation 함수는 이전과 동일 ...
   DogState _getStateFromScores() {
     if (positiveScore > 0.7) {
       return activeScore > 0.6 ? DogState.energetic : DogState.happy;
@@ -84,7 +90,7 @@ class DogAvatar extends FlameGame with TapCallbacks {
         break;
       case DogState.idle:
       default:
-        imagePath = 'dog_idle_blink_strip8.png'; // 이 파일이 에셋에 있는지 확인해주세요
+        imagePath = 'dog_idle_blink_strip8.png';
         frameCount = 8;
         stepTime = 0.15;
         break;
@@ -97,7 +103,6 @@ class DogAvatar extends FlameGame with TapCallbacks {
 
     return SpriteAnimationComponent(animation: animation, size: Vector2.all(256), anchor: Anchor.center);
   }
-
 
   @override
   void onTapDown(TapDownEvent event) {
@@ -115,17 +120,11 @@ class DogAvatar extends FlameGame with TapCallbacks {
       motionData.frameCount,
       motionData.stepTime,
     ).then((interactiveAnimation) {
-      // 현재 애니메이션을 상호작용 모션으로 교체
       _dogComponent.animation = interactiveAnimation;
 
-      // 🔥 [핵심 수정] 에러가 발생한 부분을 아래와 같이 수정합니다.
-      // SpriteAnimationComponent의 animationTicker를 통해 onComplete 콜백을 설정합니다.
       _dogComponent.animationTicker?.onComplete = () {
-        // 애니메이션이 끝나면 원래 상태의 애니메이션으로 복귀
         _dogComponent.animation = _originalAnimation;
-        // 플래그를 리셋하여 다시 클릭할 수 있도록 함
         _isPerformingInteractiveMotion = false;
-        // 콜백을 초기화하여 반복 호출 방지
         _dogComponent.animationTicker?.onComplete = null;
       };
     });
@@ -140,7 +139,7 @@ class DogAvatar extends FlameGame with TapCallbacks {
       row: 0,
       stepTime: stepTime,
       to: frameCount,
-      loop: false, // 한 번만 재생
+      loop: false,
     );
   }
 
@@ -148,6 +147,8 @@ class DogAvatar extends FlameGame with TapCallbacks {
   void onGameResize(Vector2 size) {
     super.onGameResize(size);
     if (isMounted) {
+      // ✨ [수정] 배경 컴포넌트의 크기와 위치도 업데이트
+      _backgroundComponent.size = size;
       _dogComponent.position = size / 2;
     }
   }
@@ -166,7 +167,15 @@ class DogAvatarWidget extends StatelessWidget {
     return GameWidget(
       game: DogAvatar(positiveScore: positiveScore, activeScore: activeScore),
       loadingBuilder: (context) => const Center(
-        child: CircularProgressIndicator(),
+        // ✨ [수정] 로딩 중 배경색을 설정하여 흰색 깜빡임을 방지
+        child: SizedBox(
+          width: double.infinity,
+          height: double.infinity,
+          child: DecoratedBox(
+            decoration: BoxDecoration(color: Color(0xFFF8F7FF)), // 홈 화면 배경색과 동일하게
+            child: Center(child: CircularProgressIndicator()),
+          ),
+        ),
       ),
     );
   }

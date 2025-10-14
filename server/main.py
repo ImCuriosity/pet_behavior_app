@@ -86,6 +86,14 @@ def sync_save_analysis_to_db(user_id: str, dog_id: str, type: str, result: dict,
         }).execute()
     except Exception as e: print(f"🔥 DB Save Error: {e}")
 
+def sync_get_dog_profile(dog_id: str) -> Optional[dict]:
+    if not supabase_client: return None
+    try:
+        return supabase_client.table("dogs").select("name, breed, age, gender, notes").eq("id", dog_id).single().execute().data
+    except Exception as e:
+        print(f"🔥 Dog Profile DB-Read Error: {e}")
+        return None
+
 def sync_get_rag_analysis_data(user_id: str, dog_id: str, view_type: str) -> List[dict]:
     if not supabase_client: return []
     try:
@@ -121,7 +129,6 @@ def sync_get_analysis_for_diary(user_id: str, dog_id: str, date: datetime.date) 
     if not supabase_client: return []
     try:
         start_utc, end_utc = _get_kst_day_range_in_utc(date)
-        # 라이브러리 버그를 우회하기 위해 Supabase RPC 함수를 호출합니다.
         params = {
             'user_uuid': user_id,
             'dog_id_text': dog_id,
@@ -157,9 +164,23 @@ async def analyze_eeg_endpoint(dog_id: str = Form(...), eeg_file: UploadFile = F
 
 # --- Diary Logic Helper Function ---
 async def _create_and_save_new_diary(user_id: str, dog_id: str, target_date: datetime.date, diary_date_str: str, is_regen: bool = False) -> dict:
-    analysis = await asyncio.to_thread(sync_get_analysis_for_diary, user_id, dog_id, target_date)
+    analysis_task = asyncio.to_thread(sync_get_analysis_for_diary, user_id, dog_id, target_date)
+    profile_task = asyncio.to_thread(sync_get_dog_profile, dog_id)
+    analysis, dog_profile = await asyncio.gather(analysis_task, profile_task)
+
     if not analysis:
         return {"content": "오늘은 아직 주인님이랑 있었던 일이 별로 없어요. 조금 더 놀고 나서 일기를 쓸래요!", "status": "today_empty"}
+
+    dog_profile_info = ""
+    if dog_profile:
+        items = []
+        if dog_profile.get("name"): items.append(f"- 내 이름: {dog_profile['name']}")
+        if dog_profile.get("breed"): items.append(f"- 내 견종: {dog_profile['breed']}")
+        if dog_profile.get("age"): items.append(f"- 내 나이: {dog_profile['age']}살")
+        if dog_profile.get("gender"): items.append(f"- 내 성별: {dog_profile['gender']}")
+        if dog_profile.get("notes"): items.append(f"- 참고사항: {dog_profile['notes']}")
+        if items:
+            dog_profile_info = "**[내 프로필]**\n" + "\n".join(items) + "\n\n"
 
     kst = datetime.timezone(datetime.timedelta(hours=9))
     context = ""
@@ -174,8 +195,19 @@ async def _create_and_save_new_diary(user_id: str, dog_id: str, target_date: dat
         context = "\n".join(items)
     except Exception as e: print(f"🚨 Diary Context Creation Error: {e}")
 
-    prompt = f'''You are an affectionate puppy writing a diary in Korean. Your goal is to write a diary that honestly reflects your feelings, helping your owner, "주인님", understand you better.\n\n**How to interpret my memories:**\n- `긍정 점수` is my happiness. High score (> 0.7) means I was happy/joyful. Low score (< 0.4) means I was sad, scared, uncomfortable, or grumpy.\n- `활동 점수` is my energy. High score (> 0.7) means I was active/excited. Low score (< 0.3) means I was calm, sleepy, or bored.\n\nHere are my memories from today ({diary_date_str}):\n{context}\n\nBased on these memories, write a diary entry from my perspective.\n- **DO NOT** just list the data. Weave the events into a narrative, expressing my emotions based on the scores.\n- For example, if `긍정 점수` is low during a vet visit, you could write: "오늘 병원에 갔는데 주사가 너무 무서웠어... 낑... 그래도 주인님이 꼭 안아줘서 꾹 참았어."\n- Even if I had a bad moment, **always end the diary with a loving message for my "주인님"**, showing my unconditional love.\n- Write in a cute, affectionate tone, but be truthful to the emotions from the data. Use words like "멍!" or "킁킁".'''
+    prompt = f'''You are an affectionate puppy writing a diary in Korean. Your goal is to write a diary that honestly reflects your feelings, helping your owner, "주인님", understand you better.
 
+{dog_profile_info}**[오늘 나의 기억들]**
+{context}
+
+**[일기 작성 방법]**
+- `긍정 점수`: 나의 행복 지수야. 높을수록 (> 0.7) 기분이 좋았다는 뜻이고, 낮을수록 (< 0.4) 슬프거나, 무섭거나, 화가 났었다는 뜻이야.
+- `활동 점수`: 나의 에너지 레벨이야. 높을수록 (> 0.7) 신나게 놀았다는 거고, 낮을수록 (< 0.3) 졸리거나, 심심했거나, 차분했다는 거야.
+- 나의 프로필과 하루 동안의 기억들을 바탕으로, 내 입장에서 일기를 써줘.
+- 데이터를 단순히 나열하지 말고, 내 감정이 잘 드러나도록 이야기로 엮어줘. 예를 들어, 병원에 가서 `긍정 점수`가 낮았다면, "오늘 병원에 갔는데 주사가 너무 무서웠어... 낑... 그래도 주인님이 꼭 안아줘서 꾹 참았어." 처럼 말이야.
+- 안 좋은 일이 있었더라도, 주인님에 대한 나의 사랑이 느껴지도록 항상 따뜻한 말로 일기를 마무리해줘.
+- "멍!" 이나 "킁킁" 같은 강아지 말투를 귀엽게 섞어 써도 좋아.
+'''
     try:
         response = await gemini_model.generate_content_async(prompt)
         content = response.text.strip()
@@ -228,11 +260,24 @@ async def get_chatbot_response_endpoint(req: dict, user: dict = Depends(get_curr
     if not all([user_id, dog_id, query]): raise HTTPException(400, "user_id, dog_id, and query are required.")
     if not gemini_model: raise HTTPException(503, "Chatbot model not available.")
 
-    # 기본적으로 '오늘' 데이터를 조회하도록 개선
     weekly_kw = ["주간", "이번주", "금주", "일주일"]
     view_type = 'weekly' if any(k in query.lower() for k in weekly_kw) else 'daily'
-    analyses = await asyncio.to_thread(sync_get_rag_analysis_data, user_id, dog_id, view_type)
 
+    analysis_task = asyncio.to_thread(sync_get_rag_analysis_data, user_id, dog_id, view_type)
+    profile_task = asyncio.to_thread(sync_get_dog_profile, dog_id)
+    analyses, dog_profile = await asyncio.gather(analysis_task, profile_task)
+
+    dog_profile_info = ""
+    if dog_profile:
+        items = []
+        if dog_profile.get("name"): items.append(f"- 이름: {dog_profile['name']}")
+        if dog_profile.get("breed"): items.append(f"- 견종: {dog_profile['breed']}")
+        if dog_profile.get("age"): items.append(f"- 나이: {dog_profile['age']}살")
+        if dog_profile.get("gender"): items.append(f"- 성별: {dog_profile['gender']}")
+        if dog_profile.get("notes"): items.append(f"- 특이사항: {dog_profile['notes']}")
+        if items:
+            dog_profile_info = "**[강아지 프로필 정보]**\n" + "\n".join(items) + "\n\n"
+    
     context = ""
     if analyses:
         try:
@@ -247,7 +292,26 @@ async def get_chatbot_response_endpoint(req: dict, user: dict = Depends(get_curr
             context = "\n".join(items)
         except Exception as e: print(f"🚨 RAG Context Creation Error: {e}")
 
-    prompt = f'''You are a helpful and friendly dog behavior expert. Always answer in Korean. Your main goal is to help the owner understand their dog's feelings based on objective data.\n\n**How to interpret the analysis data:**\n- `긍정 점수` reflects the dog's happiness. High score (> 0.7) means joy/comfort. Low score (< 0.4) means sadness, fear, or discomfort.\n- `활동 점수` reflects the dog's energy level. High score (> 0.7) means excitement/playfulness. Low score (< 0.3) indicates calmness, sleepiness, or boredom.\n\nPlease use the following analysis data for the requested period to provide a personalized and detailed answer.\n\n[강아지 분석 데이터]\n{context}\n\nBased on the data and the interpretation guide, answer the user's query: '{query}'.\n- When you see a low positive score, explain what might have caused the negative feeling (e.g., "천둥 소리 때문에 조금 불안했나 봐요.").\n- When you see a low active score, explain that the dog might have been tired, calm, or uninterested (e.g., "산책이 길어져서 쉬고 싶었을 수 있어요.").\n- Speak empathetically and provide constructive advice if applicable.''' if context else f'''You are a helpful and friendly dog behavior expert. Always answer in Korean.\nThe user's query is '{query}'. Provide a general but helpful answer. Do not ask for analysis data or mention it.'''
+    prompt_template = '''You are a helpful and friendly dog behavior expert. Always answer in Korean. Your main goal is to help the owner understand their dog's feelings based on objective data.
+
+{dog_profile_info}**[분석 데이터 해석 방법]**
+- `긍정 점수`: 강아지의 행복 지수입니다. 높을수록 (> 0.7) 기쁨/편안함을, 낮을수록 (< 0.4) 슬픔/불안/불편함을 의미합니다.
+- `활동 점수`: 강아지의 에너지 레벨입니다. 높을수록 (> 0.7) 신나게 놀고 있음을, 낮을수록 (< 0.3) 차분하거나 졸린 상태임을 의미합니다.
+
+**[강아지 분석 데이터]**
+{context}
+
+위 프로필과 분석 데이터를 종합적으로 참고하여, 아래 질문에 대해 상세하고 친절하게 답변해주세요.
+- 단순히 데이터를 나열하기보다, 데이터가 의미하는 바를 행동이나 감정과 연결하여 설명해주세요. (예: "천둥 소리 때문에 조금 불안했나 봐요.")
+- 필요하다면, 강아지의 기분을 개선하거나 행동을 교정하는 데 도움이 될 만한 구체적인 조언을 덧붙여주세요.
+
+**[주인님의 질문]**
+{query}
+''' if context else '''You are a helpful and friendly dog behavior expert. Always answer in Korean.
+The user's query is '{query}'. Provide a general but helpful answer without mentioning analysis data.
+'''
+
+    prompt = prompt_template.format(dog_profile_info=dog_profile_info, context=context, query=query)
 
     try:
         response = await gemini_model.generate_content_async(prompt)

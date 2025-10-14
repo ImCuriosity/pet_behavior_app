@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dognal1/features/dog_stats/screens/dog_stats_screen.dart';
 import 'package:dognal1/features/tamagotchi/widgets/dog_avatar.dart';
+import 'package:percent_indicator/percent_indicator.dart';
 
 // ✨ [추가] 말풍선을 그리기 위한 CustomClipper
 class SpeechBubbleClipper extends CustomClipper<Path> {
@@ -139,30 +140,22 @@ class TamagotchiScreen extends ConsumerWidget {
               // ⭐️ [핵심 수정] 아바타와 상태 컬럼(마음, 체력) 사이의 공간을 확보 (24.0 -> 32.0으로 늘림)
               const SizedBox(height: 62),
 
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final fontSize = constraints.maxWidth < 350 ? 14.0 : 16.0;
-
-                  return Column(
-                    children: [
-                      _buildStatusGauge(
-                        label: '마음',
-                        icon: '❤️',
-                        value: avgPositive,
-                        color: Colors.pink,
-                        fontSize: fontSize,
-                      ),
-                      const SizedBox(height: 12),
-                      _buildStatusGauge(
-                        label: '체력',
-                        icon: '🔋',
-                        value: avgActive,
-                        color: Colors.green,
-                        fontSize: fontSize,
-                      ),
-                    ],
-                  );
-                },
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _buildCircularStatusGauge(
+                    label: '마음',
+                    value: avgPositive,
+                    color: const Color(0xFFFFB6C1), // 부드러운 핑크
+                    icon: '❤️',
+                  ),
+                  _buildCircularStatusGauge(
+                    label: '체력',
+                    value: avgActive,
+                    color: const Color(0xFFB3E2A7), // 부드러운 그린
+                    icon: '🔋',
+                  ),
+                ],
               ),
             ],
           ),
@@ -171,33 +164,54 @@ class TamagotchiScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildStatusGauge({
+  Widget _buildCircularStatusGauge({
     required String label,
-    required String icon,
-    required double value,
+    required double value, // 여기로 0.75와 같은 값이 전달됩니다.
     required Color color,
-    required double fontSize,
+    required String icon,
   }) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Text(icon, style: const TextStyle(fontSize: 24)),
-        const SizedBox(width: 8),
-        Text('$label: ', style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.bold)),
-        Expanded(
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: LinearProgressIndicator(
-              value: value,
-              minHeight: fontSize * 1.5,
-              backgroundColor: color.withOpacity(0.2),
-              valueColor: AlwaysStoppedAnimation<Color>(color),
+    return CircularPercentIndicator(
+      radius: 70.0,
+      lineWidth: 14.0,
+      animation: true,
+      animationDuration: 1200,
+
+      // ✅ [수정] value를 그대로 사용합니다. (예: 0.75)
+      percent: value,
+
+      center: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 20.0,
+              color: Colors.black54,
             ),
           ),
+          const SizedBox(height: 6),
+          Text(
+            // ✅ [수정] 화면에 표시할 때만 100을 곱해줍니다. (예: "75%")
+            "${(value * 100).toStringAsFixed(0)}%",
+            style: TextStyle(
+              fontWeight: FontWeight.w900,
+              fontSize: 22.0,
+              color: color.withOpacity(0.8),
+            ),
+          ),
+        ],
+      ),
+      footer: Padding(
+        padding: const EdgeInsets.only(top: 8.0),
+        child: Text(
+          icon,
+          style: const TextStyle(fontSize: 24),
         ),
-        const SizedBox(width: 8),
-        Text('${(value * 100).toStringAsFixed(0)}%', style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.bold)),
-      ],
+      ),
+      circularStrokeCap: CircularStrokeCap.round,
+      progressColor: color,
+      backgroundColor: color.withAlpha(50),
     );
   }
 }
