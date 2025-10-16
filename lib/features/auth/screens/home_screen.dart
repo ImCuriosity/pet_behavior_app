@@ -1,3 +1,4 @@
+import 'package:dognal1/core/providers/auth_provider.dart'; // ✅ Provider를 중앙에서 가져오기 위한 import
 import 'package:dognal1/features/dog_profile/screens/create_dog_profile_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,33 +12,16 @@ import 'package:dognal1/features/dog_stats/screens/dog_stats_screen.dart';
 import 'package:dognal1/data/api/rest_client.dart';
 import 'dart:typed_data';
 
-// dogId를 비동기적으로 가져오는 provider
-final dogIdProvider = FutureProvider<String?>((ref) async {
-  final supabase = Supabase.instance.client;
-  final user = supabase.auth.currentUser;
-  if (user == null) {
-    return null;
-  }
-
-  final data = await supabase
-      .from('dogs')
-      .select('id')
-      .eq('user_id', user.id)
-      .maybeSingle();
-
-  if (data != null && data['id'] != null) {
-    return data['id'] as String;
-  }
-  return null;
-});
+// ⛔️ 이 파일에 있던 Provider 정의는 auth_provider.dart로 이동했으므로 삭제합니다.
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
+  // ✅ 매우 단순해진 로그아웃 함수
   Future<void> _signOut(BuildContext context, WidgetRef ref) async {
-    final supabase = Supabase.instance.client;
     try {
-      await supabase.auth.signOut();
+      // signOut만 호출하면 AuthChecker와 Provider가 모든 것을 알아서 처리합니다.
+      await Supabase.instance.client.auth.signOut();
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -49,15 +33,56 @@ class HomeScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // ✅ 중앙 Provider를 통해 강아지 ID와 사용자 정보를 반응형으로 가져옵니다.
     final dogIdAsync = ref.watch(dogIdProvider);
-    final userEmail = Supabase.instance.client.auth.currentUser?.email ?? 'User';
+    final user = ref.watch(userProvider); // auth_provider에 정의된 userProvider
+    final userEmail = user?.email ?? 'User';
 
-    // 변경: 전체 화면에 부드러운 배경색과 디자인 통일성을 위한 AppBar 수정
     return Scaffold(
       backgroundColor: const Color(0xFFF8F7FF),
       appBar: AppBar(
-        title: Text('$userEmail의 반려견', style: const TextStyle(color: Colors.black87)),
+        title:
+        Text('$userEmail의 반려견', style: const TextStyle(color: Colors.black87)),
         actions: [
+          // ✅ 디버그 버튼: 반응형 Provider를 사용하여 항상 정확한 정보를 보여줍니다.
+          IconButton(
+            icon: const Icon(Icons.bug_report, color: Colors.redAccent),
+            tooltip: '디버그 정보 보기',
+            onPressed: () {
+              final dogId = dogIdAsync.value;
+
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('🐞 디버그 정보'),
+                  content: SingleChildScrollView(
+                    child: ListBody(
+                      children: <Widget>[
+                        const Text('현재 로그인된 사용자 정보',
+                            style: TextStyle(fontWeight: FontWeight.bold)),
+                        Text('Email: ${user?.email ?? "N/A"}'),
+                        const Text('User ID:',
+                            style: TextStyle(fontWeight: FontWeight.bold)),
+                        SelectableText(user?.id ?? '로그인되지 않음'),
+                        const Divider(height: 20),
+                        const Text('DB에서 조회된 강아지 정보',
+                            style: TextStyle(fontWeight: FontWeight.bold)),
+                        Text('Dog ID:',
+                            style: TextStyle(fontWeight: FontWeight.bold)),
+                        SelectableText(dogId ?? '없음'),
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      child: const Text('닫기'),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.logout, color: Colors.black87),
             onPressed: () => _signOut(context, ref),
@@ -84,6 +109,7 @@ class HomeScreen extends ConsumerWidget {
                           builder: (context) => const CreateDogProfileScreen(),
                         ),
                       ).then((_) {
+                        // 프로필 생성 후 수동으로 갱신
                         ref.refresh(dogIdProvider);
                       });
                     },
@@ -149,9 +175,7 @@ class HomeScreenContent extends ConsumerWidget {
           ),
           const SizedBox(height: 20),
           AnalysisControlPanel(dogId: dogId),
-          const SizedBox(height: 40), // 변경: 간격 조정
-
-          // 변경: Wrap을 Column으로 변경하여 버튼을 세로로 배치하고 크기를 키움
+          const SizedBox(height: 40),
           Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -193,8 +217,7 @@ class HomeScreenContent extends ConsumerWidget {
                   );
                 },
               ),
-              const SizedBox(height: 24), // 추가: 간격 추가
-              // 추가: 새로운 '펫시터 찾기' 버튼
+              const SizedBox(height: 24),
               _buildSpecialActionButton(
                 context: context,
                 icon: Icons.health_and_safety_outlined,
@@ -210,7 +233,6 @@ class HomeScreenContent extends ConsumerWidget {
     );
   }
 
-  // 변경: 버튼 스타일 수정 (더 커진 패딩과 폰트)
   Widget _buildNavigationButton({
     required BuildContext context,
     required IconData icon,
@@ -228,15 +250,14 @@ class HomeScreenContent extends ConsumerWidget {
         foregroundColor: buttonColor,
         elevation: 0,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16), // 변경: 더 둥글게
+          borderRadius: BorderRadius.circular(16),
         ),
-        padding: const EdgeInsets.symmetric(vertical: 16), // 변경: 세로 패딩 증가
+        padding: const EdgeInsets.symmetric(vertical: 16),
         textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
       ),
     );
   }
 
-  // 추가: 특별한 액션을 위한 버튼 위젯 (펫시터 찾기)
   Widget _buildSpecialActionButton({
     required BuildContext context,
     required IconData icon,
@@ -244,11 +265,12 @@ class HomeScreenContent extends ConsumerWidget {
     required VoidCallback onPressed,
   }) {
     return ElevatedButton.icon(
-      icon: const Icon(Icons.health_and_safety_outlined, color: Colors.white, size: 22),
+      icon: const Icon(Icons.health_and_safety_outlined,
+          color: Colors.white, size: 22),
       label: Text(label),
       onPressed: onPressed,
       style: ElevatedButton.styleFrom(
-        backgroundColor: const Color(0xFFFFAACF), // 부드러운 코랄 핑크
+        backgroundColor: const Color(0xFFFFAACF),
         foregroundColor: Colors.white,
         elevation: 2,
         shape: RoundedRectangleBorder(
@@ -274,13 +296,13 @@ class _AnalysisControlPanelState extends ConsumerState<AnalysisControlPanel> {
   bool _isLoading = false;
 
   Future<String?> _showDescriptionDialog() async {
-    // ... (내용 동일)
     return showDialog<String>(
       context: context,
       builder: (BuildContext context) {
         final controller = TextEditingController();
         return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: const Text('분석 전 활동 설명'),
           content: TextField(
             controller: controller,
@@ -315,7 +337,6 @@ class _AnalysisControlPanelState extends ConsumerState<AnalysisControlPanel> {
   Future<void> _runAnalysis(
       Future<Map<String, dynamic>> Function() analysisFunction,
       ) async {
-    // ... (내용 동일)
     setState(() {
       _isLoading = true;
       _result = 'Cloud Run 서버에 요청 중...';
@@ -334,10 +355,6 @@ class _AnalysisControlPanelState extends ConsumerState<AnalysisControlPanel> {
 - 긍정 점수: ${positiveScore.toStringAsFixed(2)}
 - 활동 점수: ${activeScore.toStringAsFixed(2)}''';
         });
-        // ref.invalidate(analysisResultsProvider(
-        //     (dogId: widget.dogId, viewType: 'daily')));
-        // ref.invalidate(analysisResultsProvider(
-        //     (dogId: widget.dogId, viewType: 'weekly')));
       } else {
         setState(() {
           _result = '❌ 서버 응답 오류: $status';
@@ -364,7 +381,6 @@ $e''';
     final mockEegData =
     Uint8List.fromList(List.generate(1024 * 2, (i) => i % 256));
 
-    // 변경: 분석 버튼 스타일도 더 크게
     final ButtonStyle analysisButtonStyle = ElevatedButton.styleFrom(
         backgroundColor: const Color(0xFF94B4FF),
         foregroundColor: Colors.white,
@@ -373,8 +389,8 @@ $e''';
           borderRadius: BorderRadius.circular(16),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)
-    );
+        textStyle:
+        const TextStyle(fontSize: 15, fontWeight: FontWeight.w500));
 
     return Column(
       children: [
@@ -434,11 +450,12 @@ $e''';
                       .instance.client.auth.currentSession?.accessToken;
                   if (accessToken == null) return;
 
-                  await _runAnalysis(() => restClient.analyzeFacialExpression(
-                      dogId: widget.dogId,
-                      imageBytes: mockImageData,
-                      accessToken: accessToken,
-                      activityDescription: description));
+                  await _runAnalysis(
+                          () => restClient.analyzeFacialExpression(
+                          dogId: widget.dogId,
+                          imageBytes: mockImageData,
+                          accessToken: accessToken,
+                          activityDescription: description));
                 },
               ),
               ElevatedButton.icon(
@@ -455,11 +472,12 @@ $e''';
                       .instance.client.auth.currentSession?.accessToken;
                   if (accessToken == null) return;
 
-                  await _runAnalysis(() => restClient.analyzeBodyLanguage(
-                      dogId: widget.dogId,
-                      imageBytes: mockImageData,
-                      accessToken: accessToken,
-                      activityDescription: description));
+                  await _runAnalysis(
+                          () => restClient.analyzeBodyLanguage(
+                          dogId: widget.dogId,
+                          imageBytes: mockImageData,
+                          accessToken: accessToken,
+                          activityDescription: description));
                 },
               ),
               ElevatedButton.icon(

@@ -1,11 +1,11 @@
-import 'package:dognal1/data/api/rest_client.dart';
+import 'package:dognal1/data/api/rest_client.dart'; // walk_records 모델이 여기에 있다고 가정합니다.
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:intl/intl.dart'; // 날짜 포매팅을 위해 추가
 
-const String mockDogId = 'test_dog_id_001'; // 임시 mock id
-
+// ✨ 안정적인 시간 파싱 로직이 적용된 AnalysisResult 클래스
 class AnalysisResult {
   final DateTime createdAt;
   final String analysisType;
@@ -24,16 +24,22 @@ class AnalysisResult {
   factory AnalysisResult.fromMap(Map<String, dynamic> map) {
     final dtString = map['created_at'] as String? ?? '';
     DateTime parsedDate;
+
     try {
-      var tempString = dtString.replaceFirst(' ', 'T');
-      if (tempString.endsWith('Z')) {
-        tempString = tempString.substring(0, tempString.length - 1) + '+00:00';
-      } else if (tempString.endsWith('+00')) {
-        tempString += ':00';
+      if (dtString.isEmpty) {
+        parsedDate = DateTime.now().toUtc();
+      } else {
+        var tempString = dtString.replaceFirst(' ', 'T');
+        if (tempString.endsWith('+00')) {
+          tempString += ':00';
+        }
+        if (!tempString.endsWith('Z') && !tempString.contains('+')) {
+          tempString += 'Z';
+        }
+        parsedDate = DateTime.parse(tempString);
       }
-      parsedDate = DateTime.parse(tempString);
     } catch (e) {
-      parsedDate = DateTime.now();
+      parsedDate = DateTime.now().toUtc();
     }
 
     return AnalysisResult(
@@ -46,83 +52,109 @@ class AnalysisResult {
   }
 }
 
-// ✨ [수정] walk_records와 analysis_results를 통합하여 조회하는 Provider
+// ✨ [개선됨] 데이터 그룹핑 및 평균 계산 로직이 추가된 Provider
 final analysisResultsProvider = FutureProvider.autoDispose
     .family<List<AnalysisResult>, ({String dogId, String viewType})>(
         (ref, params) async {
-  final supabase = Supabase.instance.client;
-  final userId = supabase.auth.currentUser?.id;
+      final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
 
-  if (userId == null) throw Exception('User not logged in');
+      if (userId == null) throw Exception('User not logged in');
 
-  final now = DateTime.now();
-  final kstOffset = const Duration(hours: 9);
-  final nowInKst = now.toUtc().add(kstOffset);
+      final nowInKst = DateTime.now().toUtc().add(const Duration(hours: 9));
+      DateTime queryStartUtc;
+      DateTime queryEndUtc;
 
-  DateTime queryStartUtc;
-  DateTime queryEndUtc;
+      if (params.viewType == 'daily') {
+        final todayStartKst = DateTime(nowInKst.year, nowInKst.month, nowInKst.day);
+        queryStartUtc = todayStartKst.toUtc().subtract(const Duration(hours: 9));
+        queryEndUtc = queryStartUtc.add(const Duration(days: 1));
+      } else { // weekly
+        final startOfWeekKst = nowInKst.subtract(Duration(days: nowInKst.weekday - 1));
+        final startOfWeekDateKst = DateTime(startOfWeekKst.year, startOfWeekKst.month, startOfWeekKst.day);
+        queryStartUtc = startOfWeekDateKst.toUtc().subtract(const Duration(hours: 9));
+        queryEndUtc = queryStartUtc.add(const Duration(days: 7));
+      }
 
-  if (params.viewType == 'daily') {
-    final todayKstDate = DateTime.utc(nowInKst.year, nowInKst.month, nowInKst.day);
-    queryStartUtc = todayKstDate.subtract(kstOffset);
-    queryEndUtc = queryStartUtc.add(const Duration(days: 1));
-  } else { // weekly
-    final daysToSubtract = nowInKst.weekday - 1; // Monday is 1, Sunday is 7
-    final startOfWeekKstDate = DateTime.utc(nowInKst.year, nowInKst.month, nowInKst.day - daysToSubtract);
-    queryStartUtc = startOfWeekKstDate.subtract(kstOffset);
-    queryEndUtc = queryStartUtc.add(const Duration(days: 7));
-  }
+      // 1. 데이터 조회
+      final mlResultsFuture = supabase
+          .from('analysis_results')
+          .select('created_at, analysis_type, positive_score, active_score, activity_description')
+          .eq('user_id', userId)
+          .eq('dog_id', params.dogId)
+          .gte('created_at', queryStartUtc.toIso8601String())
+          .lt('created_at', queryEndUtc.toIso8601String());
 
-  // 1. ML 분석 결과 조회
-  final mlResultsFuture = supabase
-      .from('analysis_results')
-      .select('created_at, analysis_type, positive_score, active_score, activity_description')
-      .eq('user_id', userId)
-      .eq('dog_id', params.dogId)
-      .gte('created_at', queryStartUtc.toIso8601String())
-      .lt('created_at', queryEndUtc.toIso8601String());
+      final walkRecordsFuture = supabase
+          .from('walk_records')
+          .select()
+          .eq('user_id', userId)
+          .eq('dog_id', params.dogId)
+          .gte('ended_at', queryStartUtc.toIso8601String())
+          .lt('ended_at', queryEndUtc.toIso8601String());
 
-  // 2. 산책 기록 조회
-  final walkRecordsFuture = supabase
-      .from('walk_records')
-      .select()
-      .eq('user_id', userId)
-      .eq('dog_id', params.dogId)
-      .gte('ended_at', queryStartUtc.toIso8601String())
-      .lt('ended_at', queryEndUtc.toIso8601String());
+      final [mlResponse, walkResponse] = await Future.wait([mlResultsFuture, walkRecordsFuture]);
 
-  // 두 쿼리를 병렬로 실행
-  final [mlResponse, walkResponse] = await Future.wait([mlResultsFuture, walkRecordsFuture]);
+      // ❗ WalkRecord.fromMap 에서도 AnalysisResult.fromMap과 동일한 시간 파싱 로직을 사용해야 합니다.
+      final mlResults = (mlResponse as List).map((item) => AnalysisResult.fromMap(item)).toList();
+      final walkResults = (walkResponse as List).map((item) {
+        final record = WalkRecord.fromMap(item);
+        final distance = record.distanceMeters ?? 0.0;
+        final activeScore = (distance / 1500.0).clamp(0.0, 1.0);
+        final positiveScore = 0.75;
+        return AnalysisResult(
+          createdAt: record.endedAt ?? record.createdAt,
+          analysisType: 'walk',
+          positiveScore: positiveScore,
+          activeScore: activeScore,
+          activityDescription: '${(distance / 1000).toStringAsFixed(2)}km 산책 완료',
+        );
+      }).toList();
 
-  // 3. ML 분석 결과를 AnalysisResult 리스트로 변환
-  final mlResults = (mlResponse as List).map((item) => AnalysisResult.fromMap(item)).toList();
+      final combinedResults = [...mlResults, ...walkResults];
+      if (combinedResults.isEmpty) return [];
+      combinedResults.sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
-  // 4. 산책 기록을 AnalysisResult 리스트로 변환
-  final walkResults = (walkResponse as List).map((item) {
-    final record = WalkRecord.fromMap(item);
-    final distance = record.distanceMeters ?? 0.0;
-    final emotionAnalysis = record.finalEmotionAnalysis;
+      // 2. 데이터 그룹핑 및 평균 계산
+      final groupingInterval = Duration(minutes: params.viewType == 'daily' ? 10 : 120);
+      final List<AnalysisResult> aggregatedResults = [];
+      var group = <AnalysisResult>[combinedResults.first];
+      var groupStartTime = combinedResults.first.createdAt;
 
-    final activeScore = (distance / 1500.0).clamp(0.0, 1.0); // 1.5km = 1.0점
-    final positiveScore = (emotionAnalysis != null && emotionAnalysis['status'] == 'success')
-        ? (emotionAnalysis['positive_score'] as num).toDouble()
-        : 0.5; // 분석 실패 또는 없으면 중간값
+      for (int i = 1; i < combinedResults.length; i++) {
+        final current = combinedResults[i];
+        if (current.createdAt.difference(groupStartTime) < groupingInterval) {
+          group.add(current);
+        } else {
+          final avgPositive = group.map((r) => r.positiveScore).reduce((a, b) => a + b) / group.length;
+          final avgActive = group.map((r) => r.activeScore).reduce((a, b) => a + b) / group.length;
+          aggregatedResults.add(AnalysisResult(
+            createdAt: group.first.createdAt,
+            analysisType: 'aggregated',
+            positiveScore: avgPositive,
+            activeScore: avgActive,
+            activityDescription: '${group.length}개 데이터 평균',
+          ));
+          group = [current];
+          groupStartTime = current.createdAt;
+        }
+      }
 
-    return AnalysisResult(
-      createdAt: record.endedAt ?? record.createdAt, 
-      analysisType: 'walk',
-      positiveScore: positiveScore,
-      activeScore: activeScore,
-      activityDescription: '${(distance / 1000).toStringAsFixed(2)}km 산책',
-    );
-  }).toList();
+      if (group.isNotEmpty) {
+        final avgPositive = group.map((r) => r.positiveScore).reduce((a, b) => a + b) / group.length;
+        final avgActive = group.map((r) => r.activeScore).reduce((a, b) => a + b) / group.length;
+        aggregatedResults.add(AnalysisResult(
+          createdAt: group.first.createdAt,
+          analysisType: 'aggregated',
+          positiveScore: avgPositive,
+          activeScore: avgActive,
+          activityDescription: '${group.length}개 데이터 평균',
+        ));
+      }
 
-  // 5. 두 리스트를 합치고 시간순으로 정렬
-  final combinedResults = [...mlResults, ...walkResults];
-  combinedResults.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      return aggregatedResults;
+    });
 
-  return combinedResults;
-});
 
 class DogStatsScreen extends ConsumerStatefulWidget {
   final String dogId;
@@ -135,30 +167,30 @@ class DogStatsScreen extends ConsumerStatefulWidget {
 class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
   String _viewType = 'daily';
 
-  // ✨ [수정] 'walk' 타입을 범례에 추가
   final Map<String, Color> _analysisTypeColors = {
-    'eeg': Colors.blue,
-    'sound': Colors.green,
-    'body_language': Colors.orange,
-    'facial_expression': Colors.purple,
-    'walk': Colors.teal, // 산책 색상 추가
+    'eeg': Colors.blue.shade300,
+    'sound': Colors.lightGreen.shade400,
+    'body_language': Colors.orange.shade300,
+    'facial_expression': Colors.purple.shade300,
+    'walk': Colors.teal.shade400,
+    'aggregated': Colors.red.shade300, // 그룹 데이터 색상 추가
+    'unknown': Colors.grey.shade400,
   };
   final Map<String, String> _analysisTypeNames = {
     'eeg': '뇌파',
     'sound': '음성',
     'body_language': '몸짓',
     'facial_expression': '표정',
-    'walk': '산책', // 산책 이름 추가
+    'walk': '산책',
+    'aggregated': '평균', // 그룹 데이터 이름 추가
+    'unknown': '기타',
   };
-
-  Map<int, Map<String, List<AnalysisResult>>> _groupedData = {};
 
   @override
   Widget build(BuildContext context) {
     final resultsAsyncValue = ref.watch(analysisResultsProvider((dogId: widget.dogId, viewType: _viewType)));
-
     return Scaffold(
-      appBar: AppBar(title: const Text('감정 분석 리포트')),
+      appBar: AppBar(title: const Text('감정 분석 리포트 🐾')),
       body: Column(
         children: [
           Padding(
@@ -179,168 +211,229 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
           Expanded(
             child: resultsAsyncValue.when(
               loading: () => const Center(child: CircularProgressIndicator()),
-              error: (err, stack) => Center(child: Text('데이터를 불러오는데 실패했습니다: $err')),
+              error: (err, stack) => Center(child: Text('데이터 로딩 실패: $err\n$stack')),
               data: (results) {
                 if (results.isEmpty) {
                   return const Center(child: Text('표시할 데이터가 없습니다.\n분석을 먼저 시작해주세요!'));
                 }
-                _groupData(results);
-                return Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
-                  child: BarChart(_buildBarChartData()),
+                return SingleChildScrollView(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('종합 분석', style: Theme.of(context).textTheme.titleLarge),
+                        const SizedBox(height: 16),
+                        _buildSummarySection(results),
+                        const SizedBox(height: 32),
+                        Text('시간별 상세 분석', style: Theme.of(context).textTheme.titleLarge),
+                        const SizedBox(height: 24),
+                        _buildLineChartSection(results),
+                        const SizedBox(height: 24),
+                        _buildLegend(),
+                      ],
+                    ),
+                  ),
                 );
               },
             ),
           ),
-          _buildLegend(),
-          const SizedBox(height: 24),
         ],
       ),
     );
   }
 
-  Widget _buildLegend() {
-    return Wrap(
-      spacing: 16,
-      runSpacing: 8,
-      alignment: WrapAlignment.center,
-      children: _analysisTypeColors.entries.map((entry) {
-        final typeName = _analysisTypeNames[entry.key] ?? entry.key;
-        if (typeName.isEmpty) return const SizedBox.shrink(); // 이름 없는 타입은 숨김
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(width: 16, height: 16, color: entry.value),
-            const SizedBox(width: 8),
-            Text(typeName),
+// ✨ [수정됨] 데이터 항목이 3개 미만일 경우를 처리하는 로직 추가
+  Widget _buildSummarySection(List<AnalysisResult> results) {
+    final Map<String, List<double>> positiveScores = {};
+    final Map<String, List<double>> activeScores = {};
+
+    for (var r in results) {
+      // 'aggregated' 타입은 요약에서 제외하여 원본 데이터의 분포를 더 잘 보여줄 수 있습니다.
+      if (r.analysisType == 'aggregated') continue;
+      positiveScores.putIfAbsent(r.analysisType, () => []).add(r.positiveScore);
+      activeScores.putIfAbsent(r.analysisType, () => []).add(r.activeScore);
+    }
+
+    double getAverage(List<double>? values) {
+      if (values == null || values.isEmpty) return 0;
+      return values.reduce((a, b) => a + b) / values.length;
+    }
+
+    final titles = _analysisTypeNames.entries
+        .where((e) => positiveScores.containsKey(e.key) || activeScores.containsKey(e.key))
+        .map((e) => e.value)
+        .toList();
+
+    // ✨ --- 핵심 수정 사항 --- ✨
+    // 레이더 차트를 그리기 전에 데이터 종류가 3개 이상인지 확인합니다.
+    if (titles.length < 3) {
+      return SizedBox(
+        height: 180,
+        child: Center(
+          child: Text(
+            '종합 분석을 표시하기에\n데이터 종류가 부족합니다.\n(최소 3종류 필요)',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey.shade600),
+          ),
+        ),
+      );
+    }
+    // ✨ --- 여기까지 --- ✨
+
+    final ticks = List.generate(titles.length, (index) => index.toDouble());
+
+    final positiveData = ticks.map((t) {
+      final typeKey = _analysisTypeNames.entries.firstWhere((e) => e.value == titles[t.toInt()]).key;
+      return getAverage(positiveScores[typeKey]);
+    }).toList();
+
+    final activeData = ticks.map((t) {
+      final typeKey = _analysisTypeNames.entries.firstWhere((e) => e.value == titles[t.toInt()]).key;
+      return getAverage(activeScores[typeKey]);
+    }).toList();
+
+    return SizedBox(
+      height: 180,
+      child: RadarChart(
+        RadarChartData(
+          dataSets: [
+            RadarDataSet(
+              dataEntries: positiveData.map((v) => RadarEntry(value: v)).toList(),
+              borderColor: Colors.green,
+              fillColor: Colors.green.withOpacity(0.3),
+            ),
+            RadarDataSet(
+              dataEntries: activeData.map((v) => RadarEntry(value: v)).toList(),
+              borderColor: Colors.orange,
+              fillColor: Colors.orange.withOpacity(0.3),
+            ),
           ],
-        );
-      }).toList(),
+          getTitle: (index, angle) => RadarChartTitle(text: titles[index], angle: angle),
+          tickCount: 5,
+          ticksTextStyle: const TextStyle(color: Colors.transparent, fontSize: 10),
+          tickBorderData: const BorderSide(color: Colors.grey, width: 0.5),
+          gridBorderData: const BorderSide(color: Colors.grey, width: 1),
+        ),
+      ),
     );
   }
 
-  void _groupData(List<AnalysisResult> results) {
-    _groupedData = {};
+  Widget _buildLineChartSection(List<AnalysisResult> results) {
+    results.sort((a, b) => a.createdAt.compareTo(b.createdAt));
     final kst = const Duration(hours: 9);
-    for (var result in results) {
-      int groupIndex;
-      final createdAtKst = result.createdAt.toUtc().add(kst);
-      if (_viewType == 'daily') {
-        groupIndex = createdAtKst.hour;
-      } else {
-        groupIndex = createdAtKst.weekday;
-      }
-
-      _groupedData.putIfAbsent(groupIndex, () => {});
-      _groupedData[groupIndex]!.putIfAbsent(result.analysisType, () => []);
-      _groupedData[groupIndex]![result.analysisType]!.add(result);
+    final spotsPositive = <FlSpot>[];
+    final spotsActive = <FlSpot>[];
+    if (results.isEmpty) return const SizedBox(height: 250, child: Center(child: Text("데이터가 없습니다.")));
+    DateTime minTime = results.first.createdAt;
+    DateTime maxTime = results.last.createdAt;
+    for (int i = 0; i < results.length; i++) {
+      final result = results[i];
+      final x = result.createdAt.millisecondsSinceEpoch.toDouble();
+      spotsPositive.add(FlSpot(x, result.positiveScore));
+      spotsActive.add(FlSpot(x, result.activeScore));
     }
-  }
-
-  BarChartData _buildBarChartData() {
-    // ... (차트 데이터 생성 로직은 거의 동일, 타입이 동적으로 처리됨)
-     final List<BarChartGroupData> barGroups = [];
-    const double barWidth = 8;
-    final availableTypes = _analysisTypeColors.keys.toList();
-
-    if (_viewType == 'daily') {
-      for (int i = 0; i < 24; i++) {
-        final scoresForGroup = _groupedData[i] ?? {};
-        barGroups.add(BarChartGroupData(
-          x: i,
-          barsSpace: 4,
-          barRods: availableTypes.map((type) {
-            final scores = scoresForGroup[type]?.map((r) => r.positiveScore).toList() ?? [];
-            final averageScore = scores.isEmpty ? 0.0 : scores.reduce((a, b) => a + b) / scores.length;
-            return BarChartRodData(
-                toY: averageScore, color: _analysisTypeColors[type], width: barWidth);
-          }).toList(),
-        ));
-      }
-    } else { // weekly
-      for (int i = 1; i <= 7; i++) {
-        final scoresForGroup = _groupedData[i] ?? {};
-        barGroups.add(BarChartGroupData(
-          x: i - 1,
-          barsSpace: 4,
-          barRods: availableTypes.map((type) {
-            final scores = scoresForGroup[type]?.map((r) => r.positiveScore).toList() ?? [];
-            final averageScore = scores.isEmpty ? 0.0 : scores.reduce((a, b) => a + b) / scores.length;
-            return BarChartRodData(
-                toY: averageScore, color: _analysisTypeColors[type], width: barWidth);
-          }).toList(),
-        ));
-      }
-    }
-
-    return BarChartData(
-      barGroups: barGroups,
-      alignment: BarChartAlignment.spaceAround,
-      gridData: FlGridData(show: true, drawVerticalLine: false, horizontalInterval: 0.2),
-      borderData: FlBorderData(show: false),
-      titlesData: FlTitlesData(
-        topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-        rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-        leftTitles: AxisTitles(
-          sideTitles: SideTitles(
-            showTitles: true,
-            reservedSize: 40,
-            getTitlesWidget: (value, meta) =>
-                Text(value.toStringAsFixed(1), style: const TextStyle(fontSize: 10)),
+    final eventLines = results.where((r) => r.analysisType == 'walk').map((r) => VerticalLine(x: r.createdAt.millisecondsSinceEpoch.toDouble(), color: Colors.teal.withOpacity(0.7), strokeWidth: 2, label: VerticalLineLabel(show: true, labelResolver: (line) => '산책', alignment: Alignment.topRight, style: const TextStyle(color: Colors.teal, backgroundColor: Colors.white70)))).toList();
+    return SizedBox(
+      height: 250,
+      child: LineChart(
+        LineChartData(
+          extraLinesData: ExtraLinesData(verticalLines: eventLines),
+          lineBarsData: [
+            _buildLineBarData(spotsPositive, Colors.green, results),
+            _buildLineBarData(spotsActive, Colors.orange, results),
+          ],
+          lineTouchData: _buildLineTouchData(results),
+          minY: 0,
+          maxY: 1.1,
+          gridData: FlGridData(show: true, drawVerticalLine: false, horizontalInterval: 0.25),
+          borderData: FlBorderData(show: false),
+          titlesData: FlTitlesData(
+            topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 32, interval: 0.5, getTitlesWidget: (value, meta) => Text(value.toStringAsFixed(1), style: const TextStyle(fontSize: 10)))),
+            bottomTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 30,
+                interval: (maxTime.millisecondsSinceEpoch - minTime.millisecondsSinceEpoch).toDouble() / 4,
+                getTitlesWidget: (value, meta) {
+                  if (value <= meta.min || value >= meta.max) return const SizedBox();
+                  final dateTime = DateTime.fromMillisecondsSinceEpoch(value.toInt()).toUtc().add(kst);
+                  String text = _viewType == 'daily' ? DateFormat('HH:mm').format(dateTime) : DateFormat('E', 'ko_KR').format(dateTime);
+                  return SideTitleWidget(axisSide: meta.axisSide, space: 4.0, child: Text(text, style: const TextStyle(fontSize: 10)));
+                },
+              ),
+            ),
           ),
-        ),
-        bottomTitles: AxisTitles(
-          sideTitles: SideTitles(
-            showTitles: true,
-            reservedSize: 40,
-            getTitlesWidget: (value, meta) {
-              String text;
-              final index = value.toInt();
-              if (_viewType == 'daily') {
-                text = '$index시';
-              } else {
-                final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-                text = weekdays[index];
-              }
-              return SideTitleWidget(
-                  axisSide: meta.axisSide, child: Text(text, style: const TextStyle(fontSize: 10)));
-            },
-          ),
-        ),
-      ),
-      barTouchData: BarTouchData(
-        touchTooltipData: BarTouchTooltipData(
-          getTooltipColor: (_) => Colors.blueGrey,
-          getTooltipItem: (group, groupIndex, rod, rodIndex) {
-            final type = availableTypes[rodIndex];
-            final groupKey = _viewType == 'daily' ? group.x : (group.x + 1);
-            final resultsForBar = _groupedData[groupKey]?[type] ?? [];
-            final description = resultsForBar
-                .firstWhere((r) => r.activityDescription != null && r.activityDescription!.isNotEmpty,
-                    orElse: () => AnalysisResult(createdAt: DateTime.now(), analysisType: '', positiveScore: 0, activeScore: 0))
-                .activityDescription;
-
-            final title = '${_analysisTypeNames[type] ?? type}\n';
-            final scoreText = rod.toY.toStringAsFixed(2);
-            final descriptionText = description != null ? '\n$description' : '';
-
-            return BarTooltipItem(
-              title,
-              const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-              children: <TextSpan>[
-                TextSpan(
-                  text: scoreText,
-                  style: TextStyle(color: rod.color, fontWeight: FontWeight.w500),
-                ),
-                TextSpan(
-                  text: descriptionText,
-                  style: const TextStyle(color: Colors.white, fontStyle: FontStyle.italic, fontSize: 12),
-                ),
-              ],
-            );
-          },
         ),
       ),
     );
+  }
+
+  LineChartBarData _buildLineBarData(List<FlSpot> spots, Color color, List<AnalysisResult> results) {
+    return LineChartBarData(
+      spots: spots,
+      isCurved: false,
+      color: color,
+      barWidth: 3,
+      isStrokeCapRound: true,
+      dotData: FlDotData(
+        show: true,
+        getDotPainter: (spot, percent, barData, index) {
+          final result = results[index];
+          final dotColor = _analysisTypeColors[result.analysisType] ?? Colors.grey;
+          return FlDotCirclePainter(radius: 4, color: dotColor, strokeWidth: 1.5, strokeColor: Colors.white);
+        },
+      ),
+      belowBarData: BarAreaData(show: true, color: color.withOpacity(0.1)),
+    );
+  }
+
+  LineTouchData _buildLineTouchData(List<AnalysisResult> results) {
+    return LineTouchData(
+      touchTooltipData: LineTouchTooltipData(
+        getTooltipColor: (_) => Colors.blueGrey.withOpacity(0.8),
+        getTooltipItems: (touchedSpots) {
+          return touchedSpots.map((spot) {
+            final result = results[spot.spotIndex];
+            final kstTime = result.createdAt.toUtc().add(const Duration(hours: 9));
+            final timeStr = DateFormat('HH:mm').format(kstTime);
+            final typeName = _analysisTypeNames[result.analysisType] ?? '정보 없음';
+            String title = '$timeStr - $typeName\n';
+            String scoreText = spot.bar.color == Colors.green ? '긍정 점수: ${result.positiveScore.toStringAsFixed(2)}' : '활동 점수: ${result.activeScore.toStringAsFixed(2)}';
+            final description = result.activityDescription ?? '';
+            return LineTooltipItem('$title$scoreText\n', const TextStyle(color: Colors.white, fontWeight: FontWeight.bold), children: [TextSpan(text: description, style: const TextStyle(color: Colors.white70, fontStyle: FontStyle.italic))], textAlign: TextAlign.left);
+          }).toList();
+        },
+      ),
+    );
+  }
+
+  Widget _buildLegend() {
+    final lineLegends = {'긍정 점수': Colors.green, '활동 점수': Colors.orange};
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text("범례", style: TextStyle(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 16,
+          runSpacing: 8,
+          children: [
+            ...lineLegends.entries.map((entry) => _buildLegendItem(entry.value, entry.key)),
+            const SizedBox(width: double.infinity, height: 4),
+            ..._analysisTypeColors.entries.map((entry) {
+              final typeName = _analysisTypeNames[entry.key] ?? entry.key;
+              return _buildLegendItem(entry.value, '$typeName (점 색상)');
+            }),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLegendItem(Color color, String text) {
+    return Row(mainAxisSize: MainAxisSize.min, children: [Container(width: 16, height: 16, color: color), const SizedBox(width: 8), Text(text)]);
   }
 }
