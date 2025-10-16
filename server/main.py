@@ -20,7 +20,7 @@ load_dotenv()
 gemini_model = None
 supabase_client: Client = None
 
-# --- Time Utilities (시간대 버그가 수정된 올바른 버전) ---
+# --- Time Utilities ---
 def parse_utc_string(dt_str: str) -> Optional[datetime.datetime]:
     if not dt_str: return None
     try:
@@ -32,11 +32,12 @@ def parse_utc_string(dt_str: str) -> Optional[datetime.datetime]:
         print(f"🔥 Datetime Parsing Error: {e} for string '{dt_str}'")
         return None
 
+# ▼▼▼ [수정] 다이어리에서만 사용할 시간 계산 유틸리티 ▼▼▼
 def _get_kst_day_range_in_utc(target_date: datetime.date) -> tuple[datetime.datetime, datetime.datetime]:
     kst = datetime.timezone(datetime.timedelta(hours=9))
     start_of_day_kst = datetime.datetime.combine(target_date, datetime.time.min, tzinfo=kst)
-    start_of_next_day_kst = start_of_day_kst + datetime.timedelta(days=1)
-    return start_of_day_kst.astimezone(datetime.timezone.utc), start_of_next_day_kst.astimezone(datetime.timezone.utc)
+    end_of_day_kst = datetime.datetime.combine(target_date, datetime.time.max, tzinfo=kst)
+    return start_of_day_kst.astimezone(datetime.timezone.utc), end_of_day_kst.astimezone(datetime.timezone.utc)
 
 # --- FastAPI Lifecycle ---
 @asynccontextmanager
@@ -94,21 +95,31 @@ def sync_get_dog_profile(dog_id: str) -> Optional[dict]:
         print(f"🔥 Dog Profile DB-Read Error: {e}")
         return None
 
-def sync_get_rag_analysis_data(user_id: str, dog_id: str, view_type: str) -> List[dict]:
+# ▼▼▼ [수정] 데이터 조회 함수를 다시 두 개로 분리합니다. ▼▼▼
+def sync_get_rag_data(user_id: str, dog_id: str, view_type: str) -> List[dict]:
     if not supabase_client: return []
     try:
-        kst = datetime.timezone(datetime.timedelta(hours=9))
-        now_kst = datetime.datetime.now(kst)
-        if view_type == 'daily':
-            start_dt, end_dt = _get_kst_day_range_in_utc(now_kst.date())
-        elif view_type == 'weekly':
-            start_of_week = now_kst.date() - datetime.timedelta(days=now_kst.weekday())
-            start_dt, _ = _get_kst_day_range_in_utc(start_of_week)
-            end_dt = (start_dt + datetime.timedelta(days=7))
-        else: return []
+        params = { 'p_user_uuid': user_id, 'p_dog_id_text': dog_id, 'p_view_type': view_type }
+        return supabase_client.rpc('get_rag_data', params).execute().data
+    except Exception as e:
+        print(f"🔥 RAG DB-Read Error: {e}")
+        return []
 
-        return supabase_client.table("analysis_results").select("created_at, positive_score, active_score, activity_description").eq("user_id", user_id).eq("dog_id", dog_id).gte("created_at", start_dt.isoformat()).lt("created_at", end_dt.isoformat()).order("created_at", desc=True).execute().data
-    except Exception as e: print(f"🔥 RAG DB-Read Error: {e}"); return []
+def sync_get_analysis_for_diary(user_id: str, dog_id: str, target_date: datetime.date) -> List[dict]:
+    if not supabase_client: return []
+    try:
+        start_utc, end_utc = _get_kst_day_range_in_utc(target_date)
+        params = {
+            'p_user_uuid': user_id,
+            'p_dog_id_text': dog_id,
+            'p_start_time': start_utc.isoformat(),
+            'p_end_time': end_utc.isoformat()
+        }
+        return supabase_client.rpc('get_analysis_for_diary', params).execute().data
+    except Exception as e:
+        print(f"🔥 Diary Analysis Read Error: {e}")
+        return []
+# ▲▲▲ 여기까지 수정 ▲▲▲
 
 def sync_get_diary(user_id: str, dog_id: str, date: str) -> Optional[dict]:
     if not supabase_client: return None
@@ -124,21 +135,6 @@ def sync_delete_diary(user_id: str, dog_id: str, date: str):
     if not supabase_client: return
     try: supabase_client.table("diaries").delete().eq("user_id", user_id).eq("dog_id", dog_id).eq("diary_date", date).execute()
     except Exception as e: print(f"🔥 Diary Delete Error: {e}")
-
-def sync_get_analysis_for_diary(user_id: str, dog_id: str, date: datetime.date) -> List[dict]:
-    if not supabase_client: return []
-    try:
-        start_utc, end_utc = _get_kst_day_range_in_utc(date)
-        params = {
-            'user_uuid': user_id,
-            'dog_id_text': dog_id,
-            'start_time': start_utc.isoformat(),
-            'end_time': end_utc.isoformat()
-        }
-        return supabase_client.rpc('get_analysis_for_diary', params).execute().data
-    except Exception as e:
-        print(f"🔥 Diary Analysis Read Error: {e}")
-        return []
 
 # --- API Endpoints ---
 async def run_analysis_and_save(user_id: str, dog_id: str, analysis_type: str, analysis_func, file, activity_description: Optional[str] = None):
@@ -164,6 +160,7 @@ async def analyze_eeg_endpoint(dog_id: str = Form(...), eeg_file: UploadFile = F
 
 # --- Diary Logic Helper Function ---
 async def _create_and_save_new_diary(user_id: str, dog_id: str, target_date: datetime.date, diary_date_str: str, is_regen: bool = False) -> dict:
+    # ▼▼▼ [수정] 다이어리 전용 함수를 호출합니다. ▼▼▼
     analysis_task = asyncio.to_thread(sync_get_analysis_for_diary, user_id, dog_id, target_date)
     profile_task = asyncio.to_thread(sync_get_dog_profile, dog_id)
     analysis, dog_profile = await asyncio.gather(analysis_task, profile_task)
@@ -205,6 +202,7 @@ async def _create_and_save_new_diary(user_id: str, dog_id: str, target_date: dat
 - `활동 점수`: 나의 에너지 레벨이야. 높을수록 (> 0.7) 신나게 놀았다는 거고, 낮을수록 (< 0.3) 졸리거나, 심심했거나, 차분했다는 거야.
 - 나의 프로필과 하루 동안의 기억들을 바탕으로, 내 입장에서 일기를 써줘.
 - 데이터를 단순히 나열하지 말고, 내 감정이 잘 드러나도록 이야기로 엮어줘. 예를 들어, 병원에 가서 `긍정 점수`가 낮았다면, "오늘 병원에 갔는데 주사가 너무 무서웠어... 낑... 그래도 주인님이 꼭 안아줘서 꾹 참았어." 처럼 말이야.
+- **절대로 일기 본문에 날짜를 쓰지 마.** 날짜는 이미 앱 화면에 표시되고 있어.
 - 안 좋은 일이 있었더라도, 주인님에 대한 나의 사랑이 느껴지도록 항상 따뜻한 말로 일기를 마무리해줘.
 - "멍!" 이나 "킁킁" 같은 강아지 말투를 귀엽게 섞어 써도 좋아.
 '''
@@ -232,7 +230,6 @@ async def get_or_create_diary_entry(dog_id: str, diary_date_str: str = Query(...
         server_today_kst = datetime.datetime.now(kst).date()
         if target_date != server_today_kst:
             raise HTTPException(400, "Can only regenerate today's diary.")
-
         await asyncio.to_thread(sync_delete_diary, user_id, dog_id, diary_date_str)
         return await _create_and_save_new_diary(user_id, dog_id, target_date, diary_date_str, is_regen=True)
 
@@ -251,7 +248,8 @@ async def get_or_create_diary_entry(dog_id: str, diary_date_str: str = Query(...
     if target_date == server_today_kst:
         return await _create_and_save_new_diary(user_id, dog_id, target_date, diary_date_str, is_regen=False)
 
-    raise HTTPException(500, "An unexpected error occurred while processing the diary.")
+    # 이 부분은 이론적으로 도달하지 않지만, 안전을 위해 남겨둡니다.
+    raise HTTPException(404, "Diary entry not found and cannot be created for this date.")
 
 # --- Chatbot Endpoint ---
 @app.post("/api/v1/chatbot/query")
@@ -260,12 +258,26 @@ async def get_chatbot_response_endpoint(req: dict, user: dict = Depends(get_curr
     if not all([user_id, dog_id, query]): raise HTTPException(400, "user_id, dog_id, and query are required.")
     if not gemini_model: raise HTTPException(503, "Chatbot model not available.")
 
-    weekly_kw = ["주간", "이번주", "금주", "일주일"]
-    view_type = 'weekly' if any(k in query.lower() for k in weekly_kw) else 'daily'
+    weekly_kw = ["주간", "이번 주", "금주", "일주일"]
+    daily_kw = ["오늘", "지금", "현재", "하루"]
 
-    analysis_task = asyncio.to_thread(sync_get_rag_analysis_data, user_id, dog_id, view_type)
+    lower_query = query.lower()
+    view_type = None
+
+    if any(k in lower_query for k in weekly_kw):
+        view_type = 'weekly'
+    elif any(k in lower_query for k in daily_kw):
+        view_type = 'daily'
+
     profile_task = asyncio.to_thread(sync_get_dog_profile, dog_id)
-    analyses, dog_profile = await asyncio.gather(analysis_task, profile_task)
+    analyses = []
+
+    if view_type:
+        # ▼▼▼ [수정] 챗봇 전용 함수를 호출합니다. ▼▼▼
+        analysis_task = asyncio.to_thread(sync_get_rag_data, user_id, dog_id, view_type)
+        analyses, dog_profile = await asyncio.gather(analysis_task, profile_task)
+    else:
+        dog_profile = await profile_task
 
     dog_profile_info = ""
     if dog_profile:
@@ -277,7 +289,7 @@ async def get_chatbot_response_endpoint(req: dict, user: dict = Depends(get_curr
         if dog_profile.get("notes"): items.append(f"- 특이사항: {dog_profile['notes']}")
         if items:
             dog_profile_info = "**[강아지 프로필 정보]**\n" + "\n".join(items) + "\n\n"
-    
+
     context = ""
     if analyses:
         try:
@@ -307,8 +319,13 @@ async def get_chatbot_response_endpoint(req: dict, user: dict = Depends(get_curr
 
 **[주인님의 질문]**
 {query}
-''' if context else '''You are a helpful and friendly dog behavior expert. Always answer in Korean.
-The user's query is '{query}'. Provide a general but helpful answer without mentioning analysis data.
+''' if context else '''You are a helpful and friendly dog behavior expert. Always answer in Korean. Your main goal is to help the owner understand their dog's feelings.
+
+{dog_profile_info}
+위 강아지 프로필을 참고해서 아래 질문에 답변해주세요. 데이터 분석 결과는 따로 없으니, 일반적인 강아지 행동 전문가 입장에서 조언해주시면 됩니다.
+
+**[주인님의 질문]**
+{query}
 '''
 
     prompt = prompt_template.format(dog_profile_info=dog_profile_info, context=context, query=query)
