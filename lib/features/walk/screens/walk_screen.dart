@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:dognal1/data/api/rest_client.dart';
-import 'package:dognal1/features/dog_stats/screens/dog_stats_screen.dart'; // Provider invalidate를 위해 import
+import 'package:dognal1/core/providers/analysis_provider.dart';
 import 'package:dognal1/features/walk/screens/walk_history_screen.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -17,11 +17,11 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 enum WalkState { notStarted, walking, paused }
 
 class WalkScreen extends ConsumerStatefulWidget {
-  final String dogId; // dogId를 받기 위한 변수 추가
+  final String dogId;
 
   const WalkScreen({
     super.key,
-    required this.dogId, // 생성자에 dogId 추가
+    required this.dogId,
   });
 
   @override
@@ -111,7 +111,7 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
     }
   }
 
-    String _getWeatherDescription(int code) {
+  String _getWeatherDescription(int code) {
     switch (code) {
       case 0: return '맑음';
       case 1: case 2: case 3: return '대체로 맑음';
@@ -188,12 +188,13 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
     }
   }
 
+  // --- ▼▼▼ [수정] _stopWalk 함수를 동영상 촬영 로직으로 수정합니다. ▼▼▼ ---
   Future<void> _stopWalk() async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('산책 종료'),
-        content: const Text('산책을 종료하고 기록하시겠습니까?\n마지막으로 강아지의 사진을 찍어주세요.'),
+        content: const Text('산책을 마치고 강아지 표정 분석을 위해 짧은 동영상을 촬영하시겠습니까?'),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('취소')),
           FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('종료 및 촬영')),
@@ -210,55 +211,42 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
 
     try {
       final picker = ImagePicker();
-      final XFile? image = await picker.pickImage(source: ImageSource.camera, imageQuality: 50);
+      // --- [수정] 사진 대신 동영상을 촬영합니다. ---
+      final XFile? video = await picker.pickVideo(source: ImageSource.camera);
 
-      Map<String, dynamic> finalEmotionAnalysis = {'status': 'no_image'};
-
-      if (image != null) {
-        final imageBytes = await image.readAsBytes();
+      if (video != null) {
+        final videoBytes = await video.readAsBytes();
+        final videoFilename = video.name;
         final restClient = ref.read(restClientProvider);
         final accessToken = Supabase.instance.client.auth.currentSession?.accessToken;
 
         if (accessToken != null) {
-          finalEmotionAnalysis = await restClient.analyzeFacialExpression(
-            dogId: widget.dogId, // mockDogId 대신 widget.dogId 사용
-            imageBytes: imageBytes,
+          // --- [수정] 수정된 analyzeFacialExpression 함수를 올바른 파라미터로 호출합니다. ---
+          await restClient.analyzeFacialExpression(
+            dogId: widget.dogId,
+            videoBytes: videoBytes,
+            videoFilename: videoFilename,
             accessToken: accessToken,
-            activityDescription: '산책 종료 후 촬영',
+            activityDescription: '산책 종료 후 표정 분석',
           );
         }
       }
 
-      final endedAt = DateTime.now();
-      final pathPointsForDb = _pathPoints.map((p) => {'lat': p.latitude, 'lng': p.longitude}).toList();
-
-      await ref.read(restClientProvider).saveWalkRecord(
-        dogId: widget.dogId, // mockDogId 대신 widget.dogId 사용
-        startedAt: _startedAt!,
-        endedAt: endedAt,
-        durationSeconds: _durationInSeconds,
-        distanceMeters: _distance,
-        weatherInfo: _weatherInfo,
-        pathPoints: pathPointsForDb,
-        finalEmotionAnalysis: finalEmotionAnalysis,
-      );
-
-      // ✨ [수정] 다마고치 및 그래프 데이터 제공자를 무효화하여 새로고침
-      ref.invalidate(analysisResultsProvider((dogId: widget.dogId, viewType: 'daily'))); // mockDogId 대신 widget.dogId 사용
-      ref.invalidate(analysisResultsProvider((dogId: widget.dogId, viewType: 'weekly'))); // mockDogId 대신 widget.dogId 사용
+      // 중앙 Provider를 갱신하여 다른 화면에 변경사항을 알립니다.
+      ref.invalidate(analysisResultsProvider((dogId: widget.dogId, viewType: 'daily')));
+      ref.invalidate(analysisResultsProvider((dogId: widget.dogId, viewType: 'weekly')));
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('🎉 산책 완료! 홈 화면에서 업데이트된 스탯을 확인하세요!'), backgroundColor: Colors.green),
+          const SnackBar(content: Text('🎉 표정 분석 완료! 홈 화면에서 결과를 확인하세요!'), backgroundColor: Colors.green),
         );
-        // ✨ [수정] 홈 화면으로 돌아가기
         Navigator.of(context).pop();
       }
 
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('오류: 산책 기록 저장에 실패했습니다.\n$e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('오류: 분석에 실패했습니다.\n$e'), backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -267,7 +255,6 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
       }
     }
   }
-
 
   void _resetWalkState() {
     setState(() {
@@ -291,7 +278,7 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
   }
 
   double _calculateDistance(LatLng start, LatLng end) {
-    const r = 6371e3; // 지구 반지름 (미터)
+    const r = 6371e3;
     final lat1 = start.latitude * math.pi / 180;
     final lat2 = end.latitude * math.pi / 180;
     final deltaLat = (end.latitude - start.latitude) * math.pi / 180;
@@ -301,7 +288,7 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
         math.cos(lat1) * math.cos(lat2) * math.sin(deltaLng / 2) * math.sin(deltaLng / 2);
     final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
 
-    return r * c; 
+    return r * c;
   }
 
   String _formatDuration(int seconds) {
@@ -323,7 +310,7 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => WalkHistoryScreen(dogId: widget.dogId), // mockDogId 대신 widget.dogId 사용
+                  builder: (context) => WalkHistoryScreen(dogId: widget.dogId),
                 ),
               );
             },
@@ -335,15 +322,15 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
           _currentLocation == null
               ? const Center(child: CircularProgressIndicator())
               : GoogleMap(
-                  initialCameraPosition: CameraPosition(
-                    target: LatLng(_currentLocation!.latitude!, _currentLocation!.longitude!),
-                    zoom: 16,
-                  ),
-                  onMapCreated: (controller) => _mapController = controller,
-                  myLocationEnabled: true,
-                  myLocationButtonEnabled: true,
-                  polylines: _polylines,
-                ),
+            initialCameraPosition: CameraPosition(
+              target: LatLng(_currentLocation!.latitude!, _currentLocation!.longitude!),
+              zoom: 16,
+            ),
+            onMapCreated: (controller) => _mapController = controller,
+            myLocationEnabled: true,
+            myLocationButtonEnabled: true,
+            polylines: _polylines,
+          ),
           Positioned(
             bottom: 30,
             left: 20,
@@ -417,3 +404,4 @@ class _WalkScreenState extends ConsumerState<WalkScreen> {
     );
   }
 }
+

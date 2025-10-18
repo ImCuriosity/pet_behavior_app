@@ -83,7 +83,6 @@ class RestClient {
     required String accessToken,
     String? activityDescription,
   }) async {
-    // ✨ [수정] _baseUrl을 사용하도록 변경
     final url = Uri.parse('$_baseUrl/$endpoint');
     var request = http.MultipartRequest('POST', url);
 
@@ -121,9 +120,11 @@ class RestClient {
     }
   }
 
+  // --- ▼▼▼ [수정] analyzeSound 함수를 수정합니다. ▼▼▼ ---
   Future<Map<String, dynamic>> analyzeSound({
     required String dogId,
     required Uint8List audioBytes,
+    required String audioFilename, // --- [추가] 파일 이름을 전달받을 인자 ---
     required String accessToken,
     String? activityDescription,
   }) {
@@ -132,8 +133,8 @@ class RestClient {
       dogId: dogId,
       bytes: audioBytes,
       fileField: 'audio_file',
-      fileName: 'audio.wav',
-      contentType: MediaType('audio', 'wav'),
+      fileName: audioFilename, // --- [수정] 하드코딩된 'audio.wav' 대신 전달받은 파일 이름 사용 ---
+      contentType: MediaType('audio', 'mpeg'), // 일반적인 오디오 타입으로 변경 (mp3 등)
       accessToken: accessToken,
       activityDescription: activityDescription,
     );
@@ -141,17 +142,18 @@ class RestClient {
 
   Future<Map<String, dynamic>> analyzeFacialExpression({
     required String dogId,
-    required Uint8List imageBytes,
+    required Uint8List videoBytes,
+    required String videoFilename,
     required String accessToken,
     String? activityDescription,
   }) {
     return _analyze(
       endpoint: 'ml/analyze_facial_expression',
       dogId: dogId,
-      bytes: imageBytes,
+      bytes: videoBytes,
       fileField: 'image_file',
-      fileName: 'image.jpg',
-      contentType: MediaType('image', 'jpeg'),
+      fileName: videoFilename,
+      contentType: MediaType('video', 'mp4'),
       accessToken: accessToken,
       activityDescription: activityDescription,
     );
@@ -163,6 +165,8 @@ class RestClient {
     required String accessToken,
     String? activityDescription,
   }) {
+    // 현재 몸짓 분석은 임시 데이터를 사용하므로, 이 부분은 수정하지 않습니다.
+    // 만약 몸짓 분석도 마이크로서비스화한다면 이 부분을 수정해야 합니다.
     return _analyze(
       endpoint: 'ml/analyze_body_language',
       dogId: dogId,
@@ -178,6 +182,7 @@ class RestClient {
   Future<Map<String, dynamic>> analyzeEEG({
     required String dogId,
     required Uint8List eegBytes,
+    required String eegFilename,
     required String accessToken,
     String? activityDescription,
   }) {
@@ -186,20 +191,20 @@ class RestClient {
       dogId: dogId,
       bytes: eegBytes,
       fileField: 'eeg_file',
-      fileName: 'eeg.bin',
-      contentType: MediaType('application', 'octet-stream'),
+      fileName: eegFilename,
+      contentType: MediaType('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
       accessToken: accessToken,
       activityDescription: activityDescription,
     );
   }
 
+  // ... (이하 다른 함수들은 변경 없음)
   Future<Map<String, dynamic>> getDiaryEntry({
     required String dogId,
     required String diaryDate, // "YYYY-MM-DD" format
     required String accessToken,
     bool regenerate = false,
   }) async {
-    // ✨ [수정] _baseUrl을 사용하도록 변경
     final url = Uri.parse('$_baseUrl/diary/$dogId?diaryDate=$diaryDate&regenerate=$regenerate');
     try {
       final response = await http.get(
@@ -232,7 +237,6 @@ class RestClient {
     required String userQuery,
     required String accessToken,
   }) async {
-    // ✨ [수정] _baseUrl을 사용하도록 변경
     final url = Uri.parse('$_baseUrl/chatbot/query');
     try {
       final response = await http.post(
@@ -316,7 +320,7 @@ class RestClient {
 
   Future<void> saveManualAnalysisResult({
     required String dogId,
-    required String analysisType, 
+    required String analysisType,
     required double positiveScore,
     required double activeScore,
     required String activityDescription,
@@ -341,3 +345,4 @@ class RestClient {
     }
   }
 }
+

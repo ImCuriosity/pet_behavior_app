@@ -32,6 +32,7 @@ dependencies:
   flutter_markdown: ^0.7.1
   flame: ^1.18.0
   percent_indicator: ^4.2.3
+  file_picker: ^6.2.1
 
 dev_dependencies:
   flutter_test:
@@ -46,3 +47,6 @@ flutter:
     - .env
     # ✨ [수정] 사용자가 요청한 표준 에셋 경로로 수정
     - assets/images/
+
+dependency_overrides:
+  file_picker: 6.1.1

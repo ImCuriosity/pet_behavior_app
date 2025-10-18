@@ -1,8 +1,11 @@
-import 'package:dognal1/core/providers/auth_provider.dart'; // ✅ Provider를 중앙에서 가져오기 위한 import
+import 'package:dognal1/core/providers/auth_provider.dart';
+// --- [추가] 중앙에서 상태를 관리하는 Provider 파일을 import 합니다. ---
+import 'package:dognal1/core/providers/analysis_provider.dart';
 import 'package:dognal1/features/dog_profile/screens/create_dog_profile_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:file_picker/file_picker.dart';
 
 import 'package:dognal1/features/diary/screens/diary_screen.dart';
 import 'package:dognal1/features/walk/screens/walk_screen.dart';
@@ -12,15 +15,12 @@ import 'package:dognal1/features/dog_stats/screens/dog_stats_screen.dart';
 import 'package:dognal1/data/api/rest_client.dart';
 import 'dart:typed_data';
 
-// ⛔️ 이 파일에 있던 Provider 정의는 auth_provider.dart로 이동했으므로 삭제합니다.
-
+// HomeScreen 위젯 (변경 없음)
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
-  // ✅ 매우 단순해진 로그아웃 함수
   Future<void> _signOut(BuildContext context, WidgetRef ref) async {
     try {
-      // signOut만 호출하면 AuthChecker와 Provider가 모든 것을 알아서 처리합니다.
       await Supabase.instance.client.auth.signOut();
     } catch (e) {
       if (context.mounted) {
@@ -33,9 +33,8 @@ class HomeScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // ✅ 중앙 Provider를 통해 강아지 ID와 사용자 정보를 반응형으로 가져옵니다.
     final dogIdAsync = ref.watch(dogIdProvider);
-    final user = ref.watch(userProvider); // auth_provider에 정의된 userProvider
+    final user = ref.watch(userProvider);
     final userEmail = user?.email ?? 'User';
 
     return Scaffold(
@@ -44,7 +43,6 @@ class HomeScreen extends ConsumerWidget {
         title:
         Text('$userEmail의 반려견', style: const TextStyle(color: Colors.black87)),
         actions: [
-          // ✅ 디버그 버튼: 반응형 Provider를 사용하여 항상 정확한 정보를 보여줍니다.
           IconButton(
             icon: const Icon(Icons.bug_report, color: Colors.redAccent),
             tooltip: '디버그 정보 보기',
@@ -109,7 +107,6 @@ class HomeScreen extends ConsumerWidget {
                           builder: (context) => const CreateDogProfileScreen(),
                         ),
                       ).then((_) {
-                        // 프로필 생성 후 수동으로 갱신
                         ref.refresh(dogIdProvider);
                       });
                     },
@@ -155,6 +152,7 @@ class HomeScreen extends ConsumerWidget {
   }
 }
 
+// HomeScreenContent 위젯 (변경 없음)
 class HomeScreenContent extends ConsumerWidget {
   final String dogId;
 
@@ -223,7 +221,6 @@ class HomeScreenContent extends ConsumerWidget {
                 icon: Icons.health_and_safety_outlined,
                 label: '펫시터 찾기',
                 onPressed: () {
-                  // TODO: 펫시터 찾기 화면으로 이동하는 로직 구현
                 },
               ),
             ],
@@ -283,6 +280,7 @@ class HomeScreenContent extends ConsumerWidget {
   }
 }
 
+// AnalysisControlPanel 위젯
 class AnalysisControlPanel extends ConsumerStatefulWidget {
   final String dogId;
   const AnalysisControlPanel({required this.dogId, super.key});
@@ -295,7 +293,52 @@ class _AnalysisControlPanelState extends ConsumerState<AnalysisControlPanel> {
   String _result = '분석할 활동을 선택하세요.';
   bool _isLoading = false;
 
+  Future<({Uint8List bytes, String name})?> _pickEegFile() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['xlsx', 'xls'],
+        withData: true,
+      );
+      if (result != null && result.files.single.bytes != null) {
+        return (bytes: result.files.single.bytes!, name: result.files.single.name);
+      }
+      return null;
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('파일 선택 중 오류: $e')));
+      return null;
+    }
+  }
+
+  Future<({Uint8List bytes, String name})?> _pickVideoFile() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.video, withData: true);
+      if (result != null && result.files.single.bytes != null) {
+        return (bytes: result.files.single.bytes!, name: result.files.single.name);
+      }
+      return null;
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('동영상 선택 중 오류: $e')));
+      return null;
+    }
+  }
+
+  // --- [추가] 소리 분석용 오디오 파일을 선택하는 함수 ---
+  Future<({Uint8List bytes, String name})?> _pickAudioFile() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.audio, withData: true);
+      if (result != null && result.files.single.bytes != null) {
+        return (bytes: result.files.single.bytes!, name: result.files.single.name);
+      }
+      return null;
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('오디오 파일 선택 중 오류: $e')));
+      return null;
+    }
+  }
+
   Future<String?> _showDescriptionDialog() async {
+    // (내용 변경 없음)
     return showDialog<String>(
       context: context,
       builder: (BuildContext context) {
@@ -337,16 +380,15 @@ class _AnalysisControlPanelState extends ConsumerState<AnalysisControlPanel> {
   Future<void> _runAnalysis(
       Future<Map<String, dynamic>> Function() analysisFunction,
       ) async {
+    // (내용 변경 없음)
     setState(() {
       _isLoading = true;
       _result = 'Cloud Run 서버에 요청 중...';
     });
-
     try {
       final result = await analysisFunction();
-      final status = result['status'] ?? 'unknown';
-
-      if (status == 'success') {
+      final isSuccess = result.containsKey('positive_score');
+      if (isSuccess) {
         final positiveScore = result['positive_score'] ?? 0.0;
         final activeScore = result['active_score'] ?? 0.0;
         setState(() {
@@ -355,9 +397,10 @@ class _AnalysisControlPanelState extends ConsumerState<AnalysisControlPanel> {
 - 긍정 점수: ${positiveScore.toStringAsFixed(2)}
 - 활동 점수: ${activeScore.toStringAsFixed(2)}''';
         });
+        ref.invalidate(analysisResultsProvider((dogId: widget.dogId, viewType: 'daily')));
       } else {
         setState(() {
-          _result = '❌ 서버 응답 오류: $status';
+          _result = '❌ 서버 응답 오류: ${result['detail'] ?? '알 수 없는 오류'}';
         });
       }
     } catch (e) {
@@ -374,12 +417,7 @@ $e''';
   @override
   Widget build(BuildContext context) {
     final restClient = ref.watch(restClientProvider);
-    final mockAudioData =
-    Uint8List.fromList(List.generate(1024, (i) => i % 256));
-    final mockImageData =
-    Uint8List.fromList(List.generate(1024 * 5, (i) => i % 256));
-    final mockEegData =
-    Uint8List.fromList(List.generate(1024 * 2, (i) => i % 256));
+    // --- [삭제] 목업 이미지/오디오 데이터는 더 이상 사용하지 않으므로 삭제합니다. ---
 
     final ButtonStyle analysisButtonStyle = ElevatedButton.styleFrom(
         backgroundColor: const Color(0xFF94B4FF),
@@ -415,6 +453,7 @@ $e''';
             runSpacing: 10,
             alignment: WrapAlignment.center,
             children: [
+              // --- ▼▼▼ [수정] 소리 분석 버튼의 onPressed 로직을 수정합니다. ▼▼▼ ---
               ElevatedButton.icon(
                 style: analysisButtonStyle,
                 icon: const Icon(Icons.multitrack_audio, size: 20),
@@ -422,20 +461,28 @@ $e''';
                 onPressed: _isLoading
                     ? null
                     : () async {
+                  // 1. 오디오 파일 선택
+                  final audioFile = await _pickAudioFile();
+                  if (audioFile == null) return;
+
+                  // 2. 활동 설명
                   final description = await _showDescriptionDialog();
                   if (description == null) return;
 
-                  final accessToken = Supabase
-                      .instance.client.auth.currentSession?.accessToken;
+                  // 3. 인증 토큰
+                  final accessToken = Supabase.instance.client.auth.currentSession?.accessToken;
                   if (accessToken == null) return;
 
+                  // 4. 실제 오디오 파일로 분석 실행
                   await _runAnalysis(() => restClient.analyzeSound(
                       dogId: widget.dogId,
-                      audioBytes: mockAudioData,
+                      audioBytes: audioFile.bytes,
+                      audioFilename: audioFile.name,
                       accessToken: accessToken,
                       activityDescription: description));
                 },
               ),
+              // 표정 분석 버튼 (변경 없음)
               ElevatedButton.icon(
                 style: analysisButtonStyle,
                 icon: const Icon(Icons.sentiment_satisfied_outlined, size: 20),
@@ -443,21 +490,22 @@ $e''';
                 onPressed: _isLoading
                     ? null
                     : () async {
+                  final videoFile = await _pickVideoFile();
+                  if (videoFile == null) return;
                   final description = await _showDescriptionDialog();
                   if (description == null) return;
-
-                  final accessToken = Supabase
-                      .instance.client.auth.currentSession?.accessToken;
+                  final accessToken = Supabase.instance.client.auth.currentSession?.accessToken;
                   if (accessToken == null) return;
-
-                  await _runAnalysis(
-                          () => restClient.analyzeFacialExpression(
-                          dogId: widget.dogId,
-                          imageBytes: mockImageData,
-                          accessToken: accessToken,
-                          activityDescription: description));
+                  await _runAnalysis(() => restClient.analyzeFacialExpression(
+                    dogId: widget.dogId,
+                    videoBytes: videoFile.bytes,
+                    videoFilename: videoFile.name,
+                    accessToken: accessToken,
+                    activityDescription: description,
+                  ));
                 },
               ),
+              // 몸짓 분석 버튼 (변경 없음 - 여전히 임시 데이터 사용)
               ElevatedButton.icon(
                 style: analysisButtonStyle,
                 icon: const Icon(Icons.directions_run, size: 20),
@@ -467,19 +515,20 @@ $e''';
                     : () async {
                   final description = await _showDescriptionDialog();
                   if (description == null) return;
-
-                  final accessToken = Supabase
-                      .instance.client.auth.currentSession?.accessToken;
+                  final accessToken = Supabase.instance.client.auth.currentSession?.accessToken;
                   if (accessToken == null) return;
 
-                  await _runAnalysis(
-                          () => restClient.analyzeBodyLanguage(
-                          dogId: widget.dogId,
-                          imageBytes: mockImageData,
-                          accessToken: accessToken,
-                          activityDescription: description));
+                  // 몸짓 분석은 아직 임시 데이터를 사용합니다.
+                  final mockImageData = Uint8List.fromList(List.generate(1024 * 5, (i) => i % 256));
+                  await _runAnalysis(() => restClient.analyzeBodyLanguage(
+                    dogId: widget.dogId,
+                    imageBytes: mockImageData,
+                    accessToken: accessToken,
+                    activityDescription: description,
+                  ));
                 },
               ),
+              // 뇌파 분석 버튼 (변경 없음)
               ElevatedButton.icon(
                 style: analysisButtonStyle,
                 icon: const Icon(Icons.waves, size: 20),
@@ -487,16 +536,17 @@ $e''';
                 onPressed: _isLoading
                     ? null
                     : () async {
+                  final eegFile = await _pickEegFile();
+                  if (eegFile == null) return;
                   final description = await _showDescriptionDialog();
                   if (description == null) return;
-
-                  final accessToken = Supabase
-                      .instance.client.auth.currentSession?.accessToken;
+                  final accessToken =
+                      Supabase.instance.client.auth.currentSession?.accessToken;
                   if (accessToken == null) return;
-
                   await _runAnalysis(() => restClient.analyzeEEG(
                       dogId: widget.dogId,
-                      eegBytes: mockEegData,
+                      eegBytes: eegFile.bytes,
+                      eegFilename: eegFile.name,
                       accessToken: accessToken,
                       activityDescription: description));
                 },
@@ -507,3 +557,4 @@ $e''';
     );
   }
 }
+

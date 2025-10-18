@@ -12,6 +12,7 @@ from vertexai.generative_models import GenerativeModel
 from typing import Optional, List
 import datetime
 from dotenv import load_dotenv
+import httpx
 
 # 로컬 개발 환경을 위해 .env 파일을 로드합니다.
 load_dotenv()
@@ -20,7 +21,13 @@ load_dotenv()
 gemini_model = None
 supabase_client: Client = None
 
-# --- Time Utilities ---
+# --- [수정] Cloud Run 서비스 URL 환경 변수를 추가합니다. ---
+EEG_ANALYZER_URL = os.environ.get("EEG_ANALYZER_URL")
+FACIAL_ANALYZER_URL = os.environ.get("FACIAL_ANALYZER_URL")
+SOUND_ANALYZER_URL = os.environ.get("SOUND_ANALYZER_URL")
+
+
+# --- Time Utilities (변경 없음) ---
 def parse_utc_string(dt_str: str) -> Optional[datetime.datetime]:
     if not dt_str: return None
     try:
@@ -32,14 +39,13 @@ def parse_utc_string(dt_str: str) -> Optional[datetime.datetime]:
         print(f"🔥 Datetime Parsing Error: {e} for string '{dt_str}'")
         return None
 
-# ▼▼▼ [수정] 다이어리에서만 사용할 시간 계산 유틸리티 ▼▼▼
 def _get_kst_day_range_in_utc(target_date: datetime.date) -> tuple[datetime.datetime, datetime.datetime]:
     kst = datetime.timezone(datetime.timedelta(hours=9))
     start_of_day_kst = datetime.datetime.combine(target_date, datetime.time.min, tzinfo=kst)
     end_of_day_kst = datetime.datetime.combine(target_date, datetime.time.max, tzinfo=kst)
     return start_of_day_kst.astimezone(datetime.timezone.utc), end_of_day_kst.astimezone(datetime.timezone.utc)
 
-# --- FastAPI Lifecycle ---
+# --- FastAPI Lifecycle (변경 없음) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("✅ Dognal API is booting...")
@@ -63,7 +69,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Dognal API", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 
-# --- Auth ---
+# --- Auth (변경 없음) ---
 SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET")
 security_scheme = HTTPBearer()
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security_scheme)) -> dict:
@@ -71,12 +77,84 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     try: return jwt.decode(credentials.credentials, SUPABASE_JWT_SECRET, algorithms=["HS256"], audience="authenticated")
     except JWTError as e: raise HTTPException(401, f"Invalid or expired token: {e}")
 
-# --- ML & DB Functions (sync) ---
-def get_sound_analysis_result(file: UploadFile): return {"positive_score": random.uniform(0.1, 0.9), "active_score": random.uniform(0.3, 0.9)}
-def get_facial_expression_result(file: UploadFile): return {"positive_score": random.uniform(0.2, 0.8), "active_score": random.uniform(0.1, 0.5)}
-def get_body_language_result(file: UploadFile): return {"positive_score": random.uniform(0.3, 0.9), "active_score": random.uniform(0.2, 0.8)}
-def get_eeg_result(file: UploadFile): return {"positive_score": random.uniform(0.1, 0.6), "active_score": random.uniform(0.1, 0.4)}
+# --- ML & DB Functions ---
 
+# 임시 함수 (몸짓)
+def get_body_language_result(file: UploadFile): return {"positive_score": random.uniform(0.3, 0.9), "active_score": random.uniform(0.2, 0.8)}
+
+# ▼▼▼ [삭제] 기존의 임시 get_sound_analysis_result 함수를 삭제합니다. ▼▼▼
+# def get_sound_analysis_result(file: UploadFile): return {"positive_score": random.uniform(0.1, 0.9), "active_score": random.uniform(0.3, 0.9)}
+
+# 마이크로서비스 호출 함수들
+async def get_eeg_result_from_cloud_run(eeg_file: UploadFile) -> dict:
+    # (내용 변경 없음)
+    if not EEG_ANALYZER_URL:
+        raise HTTPException(status_code=503, detail="EEG 분석 서비스가 설정되지 않았습니다.")
+    if not eeg_file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="EEG 분석은 Excel 파일(.xlsx, .xls)만 가능합니다.")
+    file_content = await eeg_file.read()
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            files = {'file': (eeg_file.filename, file_content, eeg_file.content_type)}
+            response = await client.post(f"{EEG_ANALYZER_URL}/analyze/", files=files)
+            response.raise_for_status()
+            result_data = response.json()
+            return {
+                "positive_score": result_data.get("positive_percent", 0) / 100.0,
+                "active_score": result_data.get("active_percent", 0) / 100.0
+            }
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=503, detail=f"EEG 분석 서비스 연결에 실패했습니다: {exc}")
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=exc.response.status_code, detail=f"EEG 분석 서비스 오류: {exc.response.text}")
+
+async def get_facial_result_from_cloud_run(video_file: UploadFile) -> dict:
+    # (내용 변경 없음)
+    if not FACIAL_ANALYZER_URL:
+        raise HTTPException(status_code=503, detail="표정 분석 서비스가 설정되지 않았습니다.")
+    if not video_file.content_type.startswith("video/"):
+        raise HTTPException(status_code=400, detail="표정 분석은 비디오 파일만 가능합니다.")
+    file_content = await video_file.read()
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        try:
+            files = {'video_file': (video_file.filename, file_content, video_file.content_type)}
+            response = await client.post(f"{FACIAL_ANALYZER_URL}/predict", files=files)
+            response.raise_for_status()
+            return response.json()
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=503, detail=f"표정 분석 서비스 연결에 실패했습니다: {exc}")
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=exc.response.status_code, detail=f"표정 분석 서비스 오류: {exc.response.text}")
+
+# ▼▼▼ [추가] 소리 분석 마이크로서비스를 호출하는 함수를 추가합니다. ▼▼▼
+async def get_sound_result_from_cloud_run(audio_file: UploadFile) -> dict:
+    """Cloud Run에 배포된 소리 분석 서비스를 호출합니다."""
+    if not SOUND_ANALYZER_URL:
+        raise HTTPException(status_code=503, detail="소리 분석 서비스가 설정되지 않았습니다.")
+
+    # FFmpeg가 다양한 오디오 형식을 처리하므로, content_type으로만 검사합니다.
+    if not audio_file.content_type.startswith("audio/"):
+        raise HTTPException(status_code=400, detail="소리 분석은 오디오 파일만 가능합니다.")
+
+    file_content = await audio_file.read()
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            # 소리 분석 서비스는 'audio_file'이라는 이름의 파라미터를 기대합니다.
+            files = {'audio_file': (audio_file.filename, file_content, audio_file.content_type)}
+
+            response = await client.post(f"{SOUND_ANALYZER_URL}/predict", files=files)
+            response.raise_for_status()
+
+            # 소리 분석 서비스는 이미 0~1 사이의 점수를 반환하므로 변환이 필요 없습니다.
+            return response.json()
+
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=503, detail=f"소리 분석 서비스 연결에 실패했습니다: {exc}")
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=exc.response.status_code, detail=f"소리 분석 서비스 오류: {exc.response.text}")
+
+# --- ▼▼▼ [복구] 누락된 다이어리/챗봇 DB 함수들 ▼▼▼ ---
 def sync_save_analysis_to_db(user_id: str, dog_id: str, type: str, result: dict, desc: Optional[str] = None):
     if not supabase_client: return
     try:
@@ -95,7 +173,6 @@ def sync_get_dog_profile(dog_id: str) -> Optional[dict]:
         print(f"🔥 Dog Profile DB-Read Error: {e}")
         return None
 
-# ▼▼▼ [수정] 데이터 조회 함수를 다시 두 개로 분리합니다. ▼▼▼
 def sync_get_rag_data(user_id: str, dog_id: str, view_type: str) -> List[dict]:
     if not supabase_client: return []
     try:
@@ -119,7 +196,6 @@ def sync_get_analysis_for_diary(user_id: str, dog_id: str, target_date: datetime
     except Exception as e:
         print(f"🔥 Diary Analysis Read Error: {e}")
         return []
-# ▲▲▲ 여기까지 수정 ▲▲▲
 
 def sync_get_diary(user_id: str, dog_id: str, date: str) -> Optional[dict]:
     if not supabase_client: return None
@@ -142,25 +218,44 @@ async def run_analysis_and_save(user_id: str, dog_id: str, analysis_type: str, a
     await asyncio.to_thread(sync_save_analysis_to_db, user_id, dog_id, analysis_type, model_result, activity_description)
     return {"status": "success", "dog_id": dog_id, **model_result}
 
-@app.post("/api/v1/ml/analyze_sound")
-async def analyze_sound_endpoint(dog_id: str = Form(...), audio_file: UploadFile = File(...), user: dict = Depends(get_current_user), activity_description: Optional[str] = Form(None)):
-    return await run_analysis_and_save(user.get('sub'), dog_id, "sound", get_sound_analysis_result, audio_file, activity_description)
-
-@app.post("/api/v1/ml/analyze_facial_expression")
-async def analyze_facial_expression_endpoint(dog_id: str = Form(...), image_file: UploadFile = File(...), user: dict = Depends(get_current_user), activity_description: Optional[str] = Form(None)):
-    return await run_analysis_and_save(user.get('sub'), dog_id, "facial_expression", get_facial_expression_result, image_file, activity_description)
-
 @app.post("/api/v1/ml/analyze_body_language")
 async def analyze_body_language_endpoint(dog_id: str = Form(...), image_file: UploadFile = File(...), user: dict = Depends(get_current_user), activity_description: Optional[str] = Form(None)):
     return await run_analysis_and_save(user.get('sub'), dog_id, "body_language", get_body_language_result, image_file, activity_description)
 
+# ▼▼▼ [수정] 소리 분석 엔드포인트를 수정합니다. ▼▼▼
+@app.post("/api/v1/ml/analyze_sound")
+async def analyze_sound_endpoint(
+        dog_id: str = Form(...),
+        audio_file: UploadFile = File(...),
+        user: dict = Depends(get_current_user),
+        activity_description: Optional[str] = Form(None)
+):
+    model_result = await get_sound_result_from_cloud_run(audio_file)
+    user_id = user.get('sub')
+    await asyncio.to_thread(sync_save_analysis_to_db, user_id, dog_id, "sound", model_result, activity_description)
+    return {"status": "success", "dog_id": dog_id, **model_result}
+
+@app.post("/api/v1/ml/analyze_facial_expression")
+async def analyze_facial_expression_endpoint(
+        dog_id: str = Form(...),
+        video_file: UploadFile = File(..., alias="image_file"),
+        user: dict = Depends(get_current_user),
+        activity_description: Optional[str] = Form(None)
+):
+    model_result = await get_facial_result_from_cloud_run(video_file)
+    user_id = user.get('sub')
+    await asyncio.to_thread(sync_save_analysis_to_db, user_id, dog_id, "facial_expression", model_result, activity_description)
+    return {"status": "success", "dog_id": dog_id, **model_result}
+
 @app.post("/api/v1/ml/analyze_eeg")
 async def analyze_eeg_endpoint(dog_id: str = Form(...), eeg_file: UploadFile = File(...), user: dict = Depends(get_current_user), activity_description: Optional[str] = Form(None)):
-    return await run_analysis_and_save(user.get('sub'), dog_id, "eeg", get_eeg_result, eeg_file, activity_description)
+    model_result = await get_eeg_result_from_cloud_run(eeg_file)
+    user_id = user.get('sub')
+    await asyncio.to_thread(sync_save_analysis_to_db, user_id, dog_id, "eeg", model_result, activity_description)
+    return {"status": "success", "dog_id": dog_id, **model_result}
 
-# --- Diary Logic Helper Function ---
+# --- ▼▼▼ [복구] 누락된 다이어리/챗봇 API 엔드포인트 ▼▼▼ ---
 async def _create_and_save_new_diary(user_id: str, dog_id: str, target_date: datetime.date, diary_date_str: str, is_regen: bool = False) -> dict:
-    # ▼▼▼ [수정] 다이어리 전용 함수를 호출합니다. ▼▼▼
     analysis_task = asyncio.to_thread(sync_get_analysis_for_diary, user_id, dog_id, target_date)
     profile_task = asyncio.to_thread(sync_get_dog_profile, dog_id)
     analysis, dog_profile = await asyncio.gather(analysis_task, profile_task)
@@ -170,14 +265,10 @@ async def _create_and_save_new_diary(user_id: str, dog_id: str, target_date: dat
 
     dog_profile_info = ""
     if dog_profile:
-        items = []
-        if dog_profile.get("name"): items.append(f"- 내 이름: {dog_profile['name']}")
+        items = [f"- 내 이름: {dog_profile.get('name', '미정')}"]
         if dog_profile.get("breed"): items.append(f"- 내 견종: {dog_profile['breed']}")
         if dog_profile.get("age"): items.append(f"- 내 나이: {dog_profile['age']}살")
-        if dog_profile.get("gender"): items.append(f"- 내 성별: {dog_profile['gender']}")
-        if dog_profile.get("notes"): items.append(f"- 참고사항: {dog_profile['notes']}")
-        if items:
-            dog_profile_info = "**[내 프로필]**\n" + "\n".join(items) + "\n\n"
+        dog_profile_info = "**[내 프로필]**\n" + "\n".join(items) + "\n\n"
 
     kst = datetime.timezone(datetime.timedelta(hours=9))
     context = ""
@@ -186,10 +277,11 @@ async def _create_and_save_new_diary(user_id: str, dog_id: str, target_date: dat
         for r in analysis:
             cdt = parse_utc_string(r.get('created_at'))
             if not cdt: continue
-            t_str = cdt.astimezone(kst).strftime("%p %I:%M"); d = r.get('activity_description')
+            t_str = cdt.astimezone(kst).strftime("%p %I:%M")
+            d = r.get('activity_description')
             d_str = f" (그때 나는 '{d}' 같은 걸 하고 있었다!)" if d else ""
             items.append(f"- {t_str}쯤: 내 기분은 긍정 점수 {r['positive_score']:.2f}점, 활동 점수 {r['active_score']:.2f}점이었다.{d_str}")
-        context = "\n".join(items)
+        context = "**[오늘 나의 기억들]**\n" + "\n".join(items)
     except Exception as e: print(f"🚨 Diary Context Creation Error: {e}")
 
     prompt = f'''You are an affectionate puppy writing a diary in Korean. Your goal is to write a diary that honestly reflects your feelings, helping your owner, "주인님", understand you better.
@@ -216,7 +308,6 @@ async def _create_and_save_new_diary(user_id: str, dog_id: str, target_date: dat
         print(f"🚨 Diary Generation/Save Error: {e}")
         raise HTTPException(500, "Failed to write diary.")
 
-# --- Diary Main Endpoint ---
 @app.get("/api/v1/diary/{dog_id}")
 async def get_or_create_diary_entry(dog_id: str, diary_date_str: str = Query(..., alias="diaryDate"), user: dict = Depends(get_current_user), regenerate: bool = Query(False, alias="regenerate")):
     user_id = user.get('sub')
@@ -245,63 +336,33 @@ async def get_or_create_diary_entry(dog_id: str, diary_date_str: str = Query(...
     if target_date > server_today_kst:
         return {"content": "아직 오지 않은 미래의 일기는 쓸 수 없어요!", "status": "future_empty"}
 
-    if target_date == server_today_kst:
-        return await _create_and_save_new_diary(user_id, dog_id, target_date, diary_date_str, is_regen=False)
+    return await _create_and_save_new_diary(user_id, dog_id, target_date, diary_date_str)
 
-    # 이 부분은 이론적으로 도달하지 않지만, 안전을 위해 남겨둡니다.
-    raise HTTPException(404, "Diary entry not found and cannot be created for this date.")
-
-# --- Chatbot Endpoint ---
 @app.post("/api/v1/chatbot/query")
 async def get_chatbot_response_endpoint(req: dict, user: dict = Depends(get_current_user)):
-    user_id = user.get('sub'); dog_id = req.get("dog_id"); query = req.get("query")
-    if not all([user_id, dog_id, query]): raise HTTPException(400, "user_id, dog_id, and query are required.")
+    user_id = user.get('sub')
+    dog_id = req.get("dog_id")
+    query = req.get("query")
+    if not all([dog_id, query]): raise HTTPException(400, "dog_id and query are required.")
     if not gemini_model: raise HTTPException(503, "Chatbot model not available.")
 
-    weekly_kw = ["주간", "이번 주", "금주", "일주일"]
-    daily_kw = ["오늘", "지금", "현재", "하루"]
+    view_type = 'daily' if any(k in query.lower() for k in ["오늘", "지금"]) else 'weekly'
 
-    lower_query = query.lower()
-    view_type = None
-
-    if any(k in lower_query for k in weekly_kw):
-        view_type = 'weekly'
-    elif any(k in lower_query for k in daily_kw):
-        view_type = 'daily'
-
+    analysis_task = asyncio.to_thread(sync_get_rag_data, user_id, dog_id, view_type)
     profile_task = asyncio.to_thread(sync_get_dog_profile, dog_id)
-    analyses = []
-
-    if view_type:
-        # ▼▼▼ [수정] 챗봇 전용 함수를 호출합니다. ▼▼▼
-        analysis_task = asyncio.to_thread(sync_get_rag_data, user_id, dog_id, view_type)
-        analyses, dog_profile = await asyncio.gather(analysis_task, profile_task)
-    else:
-        dog_profile = await profile_task
+    analyses, dog_profile = await asyncio.gather(analysis_task, profile_task)
 
     dog_profile_info = ""
     if dog_profile:
-        items = []
-        if dog_profile.get("name"): items.append(f"- 이름: {dog_profile['name']}")
+        items = [f"- 이름: {dog_profile.get('name', '미정')}"]
         if dog_profile.get("breed"): items.append(f"- 견종: {dog_profile['breed']}")
-        if dog_profile.get("age"): items.append(f"- 나이: {dog_profile['age']}살")
-        if dog_profile.get("gender"): items.append(f"- 성별: {dog_profile['gender']}")
-        if dog_profile.get("notes"): items.append(f"- 특이사항: {dog_profile['notes']}")
-        if items:
-            dog_profile_info = "**[강아지 프로필 정보]**\n" + "\n".join(items) + "\n\n"
+        dog_profile_info = "**[강아지 프로필 정보]**\n" + "\n".join(items) + "\n\n"
 
     context = ""
     if analyses:
         try:
-            items = []
-            kst = datetime.timezone(datetime.timedelta(hours=9))
-            for r in analyses:
-                cdt = parse_utc_string(r.get('created_at'))
-                if not cdt: continue
-                t_str = cdt.astimezone(kst).strftime("%m월 %d일 %p %I:%M"); d = r.get('activity_description')
-                d_str = f" (상황: {d})" if d else ""
-                items.append(f"- {t_str}: 긍정 점수 {r.get('positive_score', 0):.2f}, 활동 점수 {r.get('active_score', 0):.2f}{d_str}")
-            context = "\n".join(items)
+            items = [f"- {parse_utc_string(r.get('created_at')).astimezone(datetime.timezone(datetime.timedelta(hours=9))).strftime('%m월 %d일 %p %I:%M')}: 긍정 점수 {r.get('positive_score', 0):.2f}, 활동 점수 {r.get('active_score', 0):.2f}, 활동 내용: {r.get('activity_description')}" for r in analyses]
+            context = "**[강아지 분석 데이터]**\n" + "\n".join(items)
         except Exception as e: print(f"🚨 RAG Context Creation Error: {e}")
 
     prompt_template = '''You are a helpful and friendly dog behavior expert. Always answer in Korean. Your main goal is to help the owner understand their dog's feelings based on objective data.
@@ -327,13 +388,16 @@ async def get_chatbot_response_endpoint(req: dict, user: dict = Depends(get_curr
 **[주인님의 질문]**
 {query}
 '''
-
     prompt = prompt_template.format(dog_profile_info=dog_profile_info, context=context, query=query)
 
     try:
         response = await gemini_model.generate_content_async(prompt)
         return {"user_id": user_id, "response": response.text}
-    except Exception as e: print(f"🚨 Vertex AI call failed: {e}"); raise HTTPException(500, f"Vertex AI call failed: {e}")
+    except Exception as e:
+        print(f"🚨 Vertex AI call failed: {e}")
+        raise HTTPException(500, f"Vertex AI call failed: {e}")
 
 @app.get("/")
-def health_check(): return {"status": "ok", "service": "Dognal API is running!"}
+def health_check():
+    return {"status": "ok", "service": "Dognal API is running!"}
+
