@@ -82,9 +82,6 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 # 임시 함수 (몸짓)
 def get_body_language_result(file: UploadFile): return {"positive_score": random.uniform(0.3, 0.9), "active_score": random.uniform(0.2, 0.8)}
 
-# ▼▼▼ [삭제] 기존의 임시 get_sound_analysis_result 함수를 삭제합니다. ▼▼▼
-# def get_sound_analysis_result(file: UploadFile): return {"positive_score": random.uniform(0.1, 0.9), "active_score": random.uniform(0.3, 0.9)}
-
 # 마이크로서비스 호출 함수들
 async def get_eeg_result_from_cloud_run(eeg_file: UploadFile) -> dict:
     # (내용 변경 없음)
@@ -346,11 +343,30 @@ async def get_chatbot_response_endpoint(req: dict, user: dict = Depends(get_curr
     if not all([dog_id, query]): raise HTTPException(400, "dog_id and query are required.")
     if not gemini_model: raise HTTPException(503, "Chatbot model not available.")
 
-    view_type = 'daily' if any(k in query.lower() for k in ["오늘", "지금"]) else 'weekly'
+    # 1. RAG 데이터 조회를 위한 키워드 정의
+    DAILY_KEYWORDS = ["오늘", "지금"]
+    WEEKLY_KEYWORDS = ["주간", "이번 주", "이 주", "이번주", "weekly"]
 
-    analysis_task = asyncio.to_thread(sync_get_rag_data, user_id, dog_id, view_type)
-    profile_task = asyncio.to_thread(sync_get_dog_profile, dog_id)
-    analyses, dog_profile = await asyncio.gather(analysis_task, profile_task)
+    # 2. 변수 초기화
+    analyses = None
+    view_type = None
+
+    # 3. 사용자 질문을 소문자로 변환하여 키워드 매칭 준비
+    query_lower = query.lower()
+
+    if any(k in query_lower for k in DAILY_KEYWORDS):
+        view_type = 'daily'
+    elif any(k in query_lower for k in WEEKLY_KEYWORDS):
+        view_type = 'weekly'
+
+    # 4. view_type이 결정되었을 때만 RAG 데이터와 프로필을 함께 조회
+    if view_type:
+        analysis_task = asyncio.to_thread(sync_get_rag_data, user_id, dog_id, view_type)
+        profile_task = asyncio.to_thread(sync_get_dog_profile, dog_id)
+        analyses, dog_profile = await asyncio.gather(analysis_task, profile_task)
+    else:
+        # 5. RAG 키워드가 없으면 강아지 프로필 정보만 조회 (일반 전문가 모드)
+        dog_profile = await asyncio.to_thread(sync_get_dog_profile, dog_id)
 
     dog_profile_info = ""
     if dog_profile:
@@ -361,9 +377,37 @@ async def get_chatbot_response_endpoint(req: dict, user: dict = Depends(get_curr
     context = ""
     if analyses:
         try:
-            items = [f"- {parse_utc_string(r.get('created_at')).astimezone(datetime.timezone(datetime.timedelta(hours=9))).strftime('%m월 %d일 %p %I:%M')}: 긍정 점수 {r.get('positive_score', 0):.2f}, 활동 점수 {r.get('active_score', 0):.2f}, 활동 내용: {r.get('activity_description')}" for r in analyses]
-            context = "**[강아지 분석 데이터]**\n" + "\n".join(items)
-        except Exception as e: print(f"🚨 RAG Context Creation Error: {e}")
+            # 시간대를 미리 정의 (가독성 향상)
+            kst = datetime.timezone(datetime.timedelta(hours=9))
+            items = []
+
+            # for 반복문으로 각 데이터를 안전하게 처리
+            for r in analyses:
+                # 1. created_at 값이 없는 경우를 대비
+                created_dt = parse_utc_string(r.get('created_at'))
+                if not created_dt:
+                    continue # 시간이 없으면 이 데이터는 건너뜀
+
+                # 2. view_type에 따라 시간 포맷 결정 (이전에 적용된 로직)
+                time_format = "%p %I:%M" if view_type == 'daily' else "%m월 %d일 %p %I:%M"
+                time_str = created_dt.astimezone(kst).strftime(time_format)
+
+                # 3. description이 없는 경우를 대비하여 기본값 설정
+                description = r.get('activity_description', '특별한 활동 없음')
+
+                # 점수 값도 안전하게 가져오기
+                positive_score = r.get('positive_score', 0)
+                active_score = r.get('active_score', 0)
+
+                items.append(
+                    f"- {time_str} 경: 긍정 점수 {positive_score:.2f}, 활동 점수 {active_score:.2f}, 활동 내용: {description}"
+                )
+
+            if items: # 처리된 데이터가 있을 경우에만 context를 생성
+                context = "**[강아지 분석 데이터]**\n" + "\n".join(items)
+
+        except Exception as e:
+            print(f"🚨 RAG Context Creation Error: {e}")
 
     prompt_template = '''You are a helpful and friendly dog behavior expert. Always answer in Korean. Your main goal is to help the owner understand their dog's feelings based on objective data.
 
