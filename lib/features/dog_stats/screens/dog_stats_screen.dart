@@ -88,7 +88,6 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
     'sound': Colors.lightGreen.shade400,
     'body_language': Colors.orange.shade300,
     'facial_expression': Colors.purple.shade300,
-    'walk': Colors.teal.shade400,
     'aggregated': Colors.red.shade300,
     'unknown': Colors.grey.shade400,
   };
@@ -97,7 +96,6 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
     'sound': '음성',
     'body_language': '몸짓',
     'facial_expression': '표정',
-    'walk': '산책',
     'aggregated': '평균',
     'unknown': '기타',
   };
@@ -392,23 +390,38 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
     );
   }
 
+  // --- ▼▼▼ [수정] _buildLineChartSection 함수를 수정합니다. ▼▼▼ ---
   Widget _buildLineChartSection(List<AnalysisResult> results) {
+    // --- '주간' 보기일 경우: ---
     if (_viewType == 'weekly') {
       results.sort((a, b) => a.createdAt.compareTo(b.createdAt));
-      if (results.isEmpty)
-        return const SizedBox(
-            height: 250, child: Center(child: Text("데이터가 없습니다.")));
+      if (results.isEmpty) return const SizedBox(height: 250, child: Center(child: Text("데이터가 없습니다.")));
+
       final kst = const Duration(hours: 9);
       final spotsPositive = <FlSpot>[];
       final spotsActive = <FlSpot>[];
       DateTime minTime = results.first.createdAt;
       DateTime maxTime = results.last.createdAt;
+
       for (int i = 0; i < results.length; i++) {
         final result = results[i];
         final x = result.createdAt.millisecondsSinceEpoch.toDouble();
         spotsPositive.add(FlSpot(x, result.positiveScore));
         spotsActive.add(FlSpot(x, result.activeScore));
       }
+
+      // --- [핵심 수정] interval이 0이 되는 것을 방지하는 안전장치 추가 ---
+      double bottomInterval;
+      final timeDiff = maxTime.millisecondsSinceEpoch - minTime.millisecondsSinceEpoch;
+
+      if (timeDiff > 0) {
+        // 데이터가 여러 개일 경우, 전체 기간을 4등분하여 라벨 간격 설정
+        bottomInterval = timeDiff.toDouble() / 4;
+      } else {
+        // 데이터가 하나뿐일 경우, 임의의 간격(예: 하루)을 설정하여 에러 방지
+        bottomInterval = const Duration(days: 1).inMilliseconds.toDouble();
+      }
+
       return SizedBox(
         height: 250,
         child: LineChart(
@@ -420,10 +433,8 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
             minY: 0,
             maxY: 1.1,
             titlesData: FlTitlesData(
-              topTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-              rightTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+              topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+              rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
               leftTitles: AxisTitles(
                   sideTitles: SideTitles(
                       showTitles: true,
@@ -435,17 +446,13 @@ class _DogStatsScreenState extends ConsumerState<DogStatsScreen> {
                 sideTitles: SideTitles(
                   showTitles: true,
                   reservedSize: 30,
-                  interval: (maxTime.millisecondsSinceEpoch -
-                      minTime.millisecondsSinceEpoch)
-                      .toDouble() /
-                      4,
+                  interval: bottomInterval, // 안전하게 계산된 interval 사용
                   getTitlesWidget: (value, meta) {
-                    if (value <= meta.min || value >= meta.max)
-                      return const SizedBox();
-                    final dateTime =
-                    DateTime.fromMillisecondsSinceEpoch(value.toInt())
-                        .toUtc()
-                        .add(kst);
+                    // 데이터가 하나뿐일 때, 라벨이 차트 범위를 벗어나면 표시하지 않음
+                    if (value < minTime.millisecondsSinceEpoch || value > maxTime.millisecondsSinceEpoch) {
+                      return const SizedBox.shrink();
+                    }
+                    final dateTime = DateTime.fromMillisecondsSinceEpoch(value.toInt()).toUtc().add(kst);
                     return SideTitleWidget(
                         axisSide: meta.axisSide,
                         space: 4.0,

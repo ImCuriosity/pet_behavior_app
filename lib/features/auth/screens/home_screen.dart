@@ -1,6 +1,8 @@
 import 'package:dognal1/core/providers/auth_provider.dart';
 // --- [추가] 중앙에서 상태를 관리하는 Provider 파일을 import 합니다. ---
 import 'package:dognal1/core/providers/analysis_provider.dart';
+// --- [추가] 새로 만든 프로필 수정 화면을 import 합니다. ---
+import 'package:dognal1/features/dog_profile/screens/edit_dog_profile_screen.dart';
 import 'package:dognal1/features/dog_profile/screens/create_dog_profile_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -43,43 +45,29 @@ class HomeScreen extends ConsumerWidget {
         title:
         Text('$userEmail의 반려견', style: const TextStyle(color: Colors.black87)),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.bug_report, color: Colors.redAccent),
-            tooltip: '디버그 정보 보기',
-            onPressed: () {
-              final dogId = dogIdAsync.value;
+          // --- ▼▼▼ [수정] 디버그 버튼을 프로필 수정 버튼으로 변경합니다. ▼▼▼ ---
+          dogIdAsync.when(
+            data: (dogId) {
+              // dogId가 있을 때만 버튼을 보여줍니다.
+              if (dogId == null) return const SizedBox.shrink();
 
-              showDialog(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text('🐞 디버그 정보'),
-                  content: SingleChildScrollView(
-                    child: ListBody(
-                      children: <Widget>[
-                        const Text('현재 로그인된 사용자 정보',
-                            style: TextStyle(fontWeight: FontWeight.bold)),
-                        Text('Email: ${user?.email ?? "N/A"}'),
-                        const Text('User ID:',
-                            style: TextStyle(fontWeight: FontWeight.bold)),
-                        SelectableText(user?.id ?? '로그인되지 않음'),
-                        const Divider(height: 20),
-                        const Text('DB에서 조회된 강아지 정보',
-                            style: TextStyle(fontWeight: FontWeight.bold)),
-                        Text('Dog ID:',
-                            style: TextStyle(fontWeight: FontWeight.bold)),
-                        SelectableText(dogId ?? '없음'),
-                      ],
+              return IconButton(
+                icon: const Icon(Icons.pets, color: Colors.black54),
+                tooltip: '반려견 프로필 보기/수정',
+                onPressed: () {
+                  // EditDogProfileScreen으로 dogId를 전달하며 이동합니다.
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => EditDogProfileScreen(dogId: dogId),
                     ),
-                  ),
-                  actions: [
-                    TextButton(
-                      child: const Text('닫기'),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                  ],
-                ),
+                  );
+                },
               );
             },
+            // 로딩 중이거나 에러가 발생했을 때는 버튼을 숨깁니다.
+            loading: () => const SizedBox.shrink(),
+            error: (e, s) => const SizedBox.shrink(),
           ),
           IconButton(
             icon: const Icon(Icons.logout, color: Colors.black87),
