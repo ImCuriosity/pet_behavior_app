@@ -25,6 +25,7 @@ supabase_client: Client = None
 EEG_ANALYZER_URL = os.environ.get("EEG_ANALYZER_URL")
 FACIAL_ANALYZER_URL = os.environ.get("FACIAL_ANALYZER_URL")
 SOUND_ANALYZER_URL = os.environ.get("SOUND_ANALYZER_URL")
+BODY_ANALYZER_URL = os.environ.get("BODY_ANALYZER_URL")
 
 
 # --- Time Utilities (변경 없음) ---
@@ -80,7 +81,30 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 # --- ML & DB Functions ---
 
 # 임시 함수 (몸짓)
-def get_body_language_result(file: UploadFile): return {"positive_score": random.uniform(0.3, 0.9), "active_score": random.uniform(0.2, 0.8)}
+async def get_body_language_result(video_file: UploadFile) -> dict: # 'image_file' -> 'video_file'로 변경
+    """로컬에 배포된 몸짓 분석 서비스를 호출합니다."""
+    if not BODY_ANALYZER_URL:
+        raise HTTPException(status_code=503, detail="몸짓 분석 서비스가 설정되지 않았습니다.")
+
+    # [수정] 이미지 검사 -> 비디오 검사 (Flutter가 비디오를 보냄)
+    if not video_file.content_type.startswith("video/"): 
+        raise HTTPException(status_code=400, detail="몸짓 분석은 비디오 파일만 가능합니다.")
+
+    file_content = await video_file.read()
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            # 👇👇👇 [수정된 코드] file_content를 추가합니다. 👇👇👇
+            files = {'video_file': (video_file.filename, file_content, video_file.content_type)} 
+
+            response = await client.post(f"{BODY_ANALYZER_URL}/predict", files=files)
+            response.raise_for_status()
+            return response.json()
+
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=503, detail=f"몸짓 분석 서비스 연결에 실패했습니다: {exc}")
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=exc.response.status_code, detail=f"몸짓 분석 서비스 오류: {exc.response.text}")
 
 # 마이크로서비스 호출 함수들
 async def get_eeg_result_from_cloud_run(eeg_file: UploadFile) -> dict:
@@ -211,13 +235,21 @@ def sync_delete_diary(user_id: str, dog_id: str, date: str):
 
 # --- API Endpoints ---
 async def run_analysis_and_save(user_id: str, dog_id: str, analysis_type: str, analysis_func, file, activity_description: Optional[str] = None):
-    model_result = analysis_func(file)
+    model_result = await analysis_func(file)
     await asyncio.to_thread(sync_save_analysis_to_db, user_id, dog_id, analysis_type, model_result, activity_description)
     return {"status": "success", "dog_id": dog_id, **model_result}
 
 @app.post("/api/v1/ml/analyze_body_language")
-async def analyze_body_language_endpoint(dog_id: str = Form(...), image_file: UploadFile = File(...), user: dict = Depends(get_current_user), activity_description: Optional[str] = Form(None)):
-    return await run_analysis_and_save(user.get('sub'), dog_id, "body_language", get_body_language_result, image_file, activity_description)
+async def analyze_body_language_endpoint(
+        dog_id: str = Form(...),
+        # [수정] Flutter의 restClient와 키를 맞추기 위해 파라미터 이름과 alias를 수정합니다.
+        # (표정 분석과 동일하게 'image_file' 키로 받되, 'video_file' 변수로 사용)
+        video_file: UploadFile = File(..., alias="image_file"), 
+        user: dict = Depends(get_current_user), 
+        activity_description: Optional[str] = Form(None)
+):
+    # [수정] 'image_file' -> 'video_file'로 변경
+    return await run_analysis_and_save(user.get('sub'), dog_id, "body_language", get_body_language_result, video_file, activity_description)
 
 # ▼▼▼ [수정] 소리 분석 엔드포인트를 수정합니다. ▼▼▼
 @app.post("/api/v1/ml/analyze_sound")

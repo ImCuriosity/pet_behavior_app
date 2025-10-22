@@ -1,87 +1,56 @@
 import 'package:dognal1/core/providers/auth_provider.dart';
-// --- [추가] 중앙에서 상태를 관리하는 Provider 파일을 import 합니다. ---
+// --- [추가] 반려견 프로필 정보를 가져오기 위해 import 합니다. ---
+import 'package:dognal1/core/providers/dog_provider.dart';
 import 'package:dognal1/core/providers/analysis_provider.dart';
-// --- [추가] 새로 만든 프로필 수정 화면을 import 합니다. ---
 import 'package:dognal1/features/dog_profile/screens/edit_dog_profile_screen.dart';
 import 'package:dognal1/features/dog_profile/screens/create_dog_profile_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:file_picker/file_picker.dart';
 
 import 'package:dognal1/features/diary/screens/diary_screen.dart';
 import 'package:dognal1/features/walk/screens/walk_screen.dart';
 import 'package:dognal1/features/chatbot/screens/chatbot_modal.dart';
 import 'package:dognal1/features/tamagotchi/screens/tamagotchi_screen.dart';
 import 'package:dognal1/features/dog_stats/screens/dog_stats_screen.dart';
-import 'package:dognal1/data/api/rest_client.dart';
-import 'dart:typed_data';
+import 'package:dognal1/features/analysis/analysis_screen.dart';
 
-// HomeScreen 위젯 (변경 없음)
-class HomeScreen extends ConsumerWidget {
+// --- [수정] HomeScreen을 ConsumerStatefulWidget으로 변경 ---
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
-  Future<void> _signOut(BuildContext context, WidgetRef ref) async {
-    try {
-      await Supabase.instance.client.auth.signOut();
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('로그아웃 실패: $e')),
-        );
-      }
-    }
+  @override
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends ConsumerState<HomeScreen> {
+  // --- [추가] 네비게이션 바의 현재 인덱스 ---
+  int _selectedIndex = 0;
+
+  // --- [추가] 네비게이션 바 탭 핸들러 ---
+  void _onItemTapped(int index) {
+    setState(() {
+      _selectedIndex = index;
+    });
   }
 
+  // --- [추가] 새로운 파스텔 색상 정의 ---
+  final Color pastelBluePurple = const Color(0xFF7986CB); // Indigo 300
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final dogIdAsync = ref.watch(dogIdProvider);
-    final user = ref.watch(userProvider);
-    final userEmail = user?.email ?? 'User';
+    // --- [삭제] user와 userEmail은 AppBar에서 더 이상 사용되지 않습니다. ---
+    // final user = ref.watch(userProvider);
+    // final userEmail = user?.email ?? 'User';
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF8F7FF),
-      appBar: AppBar(
-        title:
-        Text('$userEmail의 반려견', style: const TextStyle(color: Colors.black87)),
-        actions: [
-          // --- ▼▼▼ [수정] 디버그 버튼을 프로필 수정 버튼으로 변경합니다. ▼▼▼ ---
-          dogIdAsync.when(
-            data: (dogId) {
-              // dogId가 있을 때만 버튼을 보여줍니다.
-              if (dogId == null) return const SizedBox.shrink();
-
-              return IconButton(
-                icon: const Icon(Icons.pets, color: Colors.black54),
-                tooltip: '반려견 프로필 보기/수정',
-                onPressed: () {
-                  // EditDogProfileScreen으로 dogId를 전달하며 이동합니다.
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => EditDogProfileScreen(dogId: dogId),
-                    ),
-                  );
-                },
-              );
-            },
-            // 로딩 중이거나 에러가 발생했을 때는 버튼을 숨깁니다.
-            loading: () => const SizedBox.shrink(),
-            error: (e, s) => const SizedBox.shrink(),
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout, color: Colors.black87),
-            onPressed: () => _signOut(context, ref),
-            tooltip: '로그아웃',
-          ),
-        ],
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-      ),
-      body: dogIdAsync.when(
-        data: (dogId) {
-          if (dogId == null) {
-            return Center(
+    // dogIdAsync.when을 Scaffold 바깥으로 이동시켜 로딩/에러/데이터 없음을 먼저 처리
+    return dogIdAsync.when(
+      data: (dogId) {
+        // --- [수정] dogId가 없으면 프로필 생성 화면을 먼저 보여줌 ---
+        if (dogId == null) {
+          return Scaffold(
+            body: Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -95,454 +64,258 @@ class HomeScreen extends ConsumerWidget {
                           builder: (context) => const CreateDogProfileScreen(),
                         ),
                       ).then((_) {
-                        ref.refresh(dogIdProvider);
+                        // 프로필 생성 후 dogId를 다시 불러옵니다.
+                        ref.invalidate(dogIdProvider);
                       });
                     },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: pastelBluePurple, // [수정] 색상 적용
+                      foregroundColor: Colors.white,
+                    ),
                     child: const Text('반려견 프로필 만들기'),
                   ),
                 ],
               ),
-            );
-          }
-          return HomeScreenContent(dogId: dogId);
-        },
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, stack) => Center(child: Text('오류 발생: $err')),
-      ),
-      floatingActionButton: dogIdAsync.when(
-        data: (dogId) {
-          if (dogId != null) {
-            return FloatingActionButton(
-              onPressed: () {
-                showModalBottomSheet(
-                  context: context,
-                  isScrollControlled: true,
-                  backgroundColor: Colors.white,
-                  shape: const RoundedRectangleBorder(
-                    borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+          );
+        }
+
+        // --- [추가] dogId가 있을 경우 AppBar에 이름을 표시하기 위해 프로필을 watch ---
+        final dogProfileAsync = ref.watch(dogProfileProvider(dogId));
+
+        // --- [추가] dogId가 있을 경우 네비게이션 될 화면 목록 ---
+        final List<Widget> widgetOptions = <Widget>[
+          HomeScreenContent(dogId: dogId), // 홈
+          DiaryScreen(dogId: dogId), // 일기
+          WalkScreen(dogId: dogId), // 산책
+          DogStatsScreen(dogId: dogId), // 통계
+        ];
+
+        // --- [수정] dogId가 있으면 네비게이션 바가 포함된 Scaffold를 반환 ---
+        return Scaffold(
+          backgroundColor: const Color(0xFFF8F7FF),
+          appBar: AppBar(
+            // --- [수정] title을 로고 + 반려견 이름으로 변경 ---
+            title: dogProfileAsync.when(
+              data: (dogProfile) => Row(
+                mainAxisSize: MainAxisSize.min, // title 영역에 맞게 크기 조절
+                children: [
+                  // 로고 이미지 (경로와 높이 조절)
+                  Image.asset(
+                    'assets/images/dognal1.png', // 사용자가 요청한 로고 경로
+                    height: 32, // AppBar 높이에 맞게 조절
                   ),
-                  builder: (BuildContext context) {
-                    return ChatbotModal(dogId: dogId);
-                  },
-                );
-              },
-              backgroundColor: const Color(0xFF623AA2),
-              child: const Icon(Icons.chat_bubble_outline, color: Colors.white),
-              tooltip: '챗봇에게 물어보기',
-            );
-          }
-          return null;
-        },
-        loading: () => null,
-        error: (err, stack) => null,
-      ),
+                  const SizedBox(width: 10),
+                  // 반려견 이름
+                  Text(
+                    dogProfile.name,
+                    style: const TextStyle(
+                      color: Colors.black87,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              // 로딩/에러 시 로고만 표시
+              loading: () =>
+                  Image.asset('assets/images/dognal1.png', height: 32),
+              error: (e, s) =>
+                  Image.asset('assets/images/dognal1.png', height: 32),
+            ),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.pets, color: Colors.black54),
+                tooltip: '반려견 프로필 보기/수정',
+                onPressed: () {
+                  // EditDogProfileScreen으로 dogId를 전달하며 이동합니다.
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => EditDogProfileScreen(dogId: dogId),
+                    ),
+                  );
+                },
+              ),
+            ],
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+          ),
+          // --- [수정] IndexedStack을 사용하여 탭 간 상태 유지 ---
+          body: IndexedStack(
+            index: _selectedIndex,
+            children: widgetOptions,
+          ),
+          // --- [추가] 하단 네비게이션 바 ---
+          bottomNavigationBar: BottomNavigationBar(
+            items: const <BottomNavigationBarItem>[
+              BottomNavigationBarItem(
+                icon: Icon(Icons.home_outlined),
+                activeIcon: Icon(Icons.home),
+                label: '홈',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.book_outlined),
+                activeIcon: Icon(Icons.book),
+                label: '일기',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.pets_outlined),
+                activeIcon: Icon(Icons.pets),
+                label: '산책',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.bar_chart_outlined),
+                activeIcon: Icon(Icons.bar_chart),
+                label: '통계',
+              ),
+            ],
+            currentIndex: _selectedIndex,
+            selectedItemColor: pastelBluePurple, // [수정] 선택된 아이템 색상
+            unselectedItemColor: Colors.grey, // 선택되지 않은 아이템 색상
+            onTap: _onItemTapped,
+            type: BottomNavigationBarType.fixed, // 4개 이상의 탭을 고정으로
+            backgroundColor: Colors.white,
+            elevation: 5,
+          ),
+          // --- [삭제] FloatingActionButton 제거 ---
+        );
+      },
+      loading: () =>
+      const Scaffold(body: Center(child: CircularProgressIndicator())),
+      error: (err, stack) =>
+          Scaffold(body: Center(child: Text('오류 발생: $err'))),
     );
   }
 }
 
-// HomeScreenContent 위젯 (변경 없음)
+// --- [수정] HomeScreenContent 위젯 (레이아웃 및 버튼 스타일 변경) ---
 class HomeScreenContent extends ConsumerWidget {
   final String dogId;
 
   const HomeScreenContent({required this.dogId, super.key});
 
+  // --- [추가] 새로운 파스텔 색상 정의 ---
+  final Color pastelBluePurple = const Color(0xFF7986CB); // Indigo 300
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Card(
-            elevation: 0,
-            margin: EdgeInsets.zero,
-            color: Colors.transparent,
-            child: TamagotchiScreen(dogId: dogId),
-          ),
-          const SizedBox(height: 20),
-          AnalysisControlPanel(dogId: dogId),
-          const SizedBox(height: 40),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _buildNavigationButton(
-                context: context,
-                icon: Icons.book_outlined,
-                label: '강아지 일기',
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => DiaryScreen(dogId: dogId)),
-                  );
-                },
-              ),
-              const SizedBox(height: 12),
-              _buildNavigationButton(
-                context: context,
-                icon: Icons.pets_outlined,
-                label: '산책가기',
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => WalkScreen(dogId: dogId)),
-                  );
-                },
-              ),
-              const SizedBox(height: 12),
-              _buildNavigationButton(
-                context: context,
-                icon: Icons.bar_chart_outlined,
-                label: '감정 그래프',
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => DogStatsScreen(dogId: dogId)),
-                  );
-                },
-              ),
-              const SizedBox(height: 24),
-              _buildSpecialActionButton(
-                context: context,
-                icon: Icons.health_and_safety_outlined,
-                label: '펫시터 찾기',
-                onPressed: () {
-                },
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNavigationButton({
-    required BuildContext context,
-    required IconData icon,
-    required String label,
-    required VoidCallback onPressed,
-  }) {
-    const buttonColor = Color(0xFF3366CC);
-
-    return ElevatedButton.icon(
-      icon: Icon(icon, color: buttonColor, size: 22),
-      label: Text(label),
-      onPressed: onPressed,
-      style: ElevatedButton.styleFrom(
-        backgroundColor: const Color(0xFFF0F4FF),
-        foregroundColor: buttonColor,
-        elevation: 0,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
-      ),
-    );
-  }
-
-  Widget _buildSpecialActionButton({
-    required BuildContext context,
-    required IconData icon,
-    required String label,
-    required VoidCallback onPressed,
-  }) {
-    return ElevatedButton.icon(
-      icon: const Icon(Icons.health_and_safety_outlined,
-          color: Colors.white, size: 22),
-      label: Text(label),
-      onPressed: onPressed,
-      style: ElevatedButton.styleFrom(
-        backgroundColor: const Color(0xFFFFAACF),
-        foregroundColor: Colors.white,
-        elevation: 2,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
-      ),
-    );
-  }
-}
-
-// AnalysisControlPanel 위젯
-class AnalysisControlPanel extends ConsumerStatefulWidget {
-  final String dogId;
-  const AnalysisControlPanel({required this.dogId, super.key});
-  @override
-  ConsumerState<AnalysisControlPanel> createState() =>
-      _AnalysisControlPanelState();
-}
-
-class _AnalysisControlPanelState extends ConsumerState<AnalysisControlPanel> {
-  String _result = '분석할 활동을 선택하세요.';
-  bool _isLoading = false;
-
-  Future<({Uint8List bytes, String name})?> _pickEegFile() async {
-    try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['xlsx', 'xls'],
-        withData: true,
-      );
-      if (result != null && result.files.single.bytes != null) {
-        return (bytes: result.files.single.bytes!, name: result.files.single.name);
-      }
-      return null;
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('파일 선택 중 오류: $e')));
-      return null;
-    }
-  }
-
-  Future<({Uint8List bytes, String name})?> _pickVideoFile() async {
-    try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.video, withData: true);
-      if (result != null && result.files.single.bytes != null) {
-        return (bytes: result.files.single.bytes!, name: result.files.single.name);
-      }
-      return null;
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('동영상 선택 중 오류: $e')));
-      return null;
-    }
-  }
-
-  // --- [추가] 소리 분석용 오디오 파일을 선택하는 함수 ---
-  Future<({Uint8List bytes, String name})?> _pickAudioFile() async {
-    try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.audio, withData: true);
-      if (result != null && result.files.single.bytes != null) {
-        return (bytes: result.files.single.bytes!, name: result.files.single.name);
-      }
-      return null;
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('오디오 파일 선택 중 오류: $e')));
-      return null;
-    }
-  }
-
-  Future<String?> _showDescriptionDialog() async {
-    // (내용 변경 없음)
-    return showDialog<String>(
-      context: context,
-      builder: (BuildContext context) {
-        final controller = TextEditingController();
-        return AlertDialog(
-          shape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text('분석 전 활동 설명'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            decoration: const InputDecoration(
-              labelText: '강아지가 무엇을 하고 있었나요?',
-              hintText: '예: 창 밖을 보며 짖고 있었음',
-              border: OutlineInputBorder(),
+    // [수정] LayoutBuilder와 ConstrainedBox를 사용하여 최소 높이를 화면 높이로 설정
+    // 이렇게 하면 Column이 전체 공간을 차지하고 버튼을 하단에 배치할 수 있습니다.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(16.0),
+          child: ConstrainedBox(
+            // [수정] 부모(SingleChildScrollView)의 패딩값을 뺀 최소 높이 설정
+            constraints: BoxConstraints(
+              minHeight:
+              constraints.maxHeight - 32.0, // 16.0 (top) + 16.0 (bottom)
             ),
-          ),
-          actions: <Widget>[
-            TextButton(
-              child: const Text('취소'),
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF94B4FF),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+            child: Column(
+              mainAxisAlignment:
+              MainAxisAlignment.start, // [수정] spaceBetween -> start로 변경하여 위쪽에 붙임
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                // --- 상단 컨텐츠 (오늘의 컨디션) ---
+                Column(
+                  children: [
+                    Card(
+                      elevation: 0,
+                      margin: EdgeInsets.zero,
+                      color: Colors.transparent,
+                      child: TamagotchiScreen(dogId: dogId),
+                    ),
+                    const SizedBox(height: 30),
+                  ],
                 ),
-              ),
-              child: const Text('분석 시작'),
-              onPressed: () => Navigator.of(context).pop(controller.text),
+
+                // --- 하단 컨텐츠 (버튼) ---
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // --- [수정] "AI 분석" 버튼 ---
+                    _buildSpecialActionButton(
+                      context: context,
+                      icon: Icons.science_outlined,
+                      label: 'AI 분석 시작하기',
+                      color: pastelBluePurple, // [수정] 색상 전달
+                      onPressed: () {
+                        // --- [수정] AnalysisScreen을 모달로 띄우도록 변경 ---
+                        showModalBottomSheet(
+                          context: context,
+                          isScrollControlled:
+                          true, // 화면의 많은 부분을 차지할 수 있도록 설정
+                          backgroundColor: Colors.white,
+                          shape: const RoundedRectangleBorder(
+                            borderRadius: BorderRadius.vertical(
+                                top: Radius.circular(20)),
+                          ),
+                          builder: (BuildContext context) {
+                            return AnalysisScreen(dogId: dogId);
+                          },
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16), // [추가] 버튼 사이 간격
+
+                    // --- [추가] "챗봇" 버튼 ---
+                    _buildSpecialActionButton(
+                      context: context,
+                      icon: Icons.chat_bubble_outline,
+                      label: '챗봇에게 물어보기',
+                      color: pastelBluePurple, // [수정] 색상 전달
+                      onPressed: () {
+                        // 기존 FAB의 챗봇 모달 로직
+                        showModalBottomSheet(
+                          context: context,
+                          isScrollControlled: true,
+                          backgroundColor: Colors.white,
+                          shape: const RoundedRectangleBorder(
+                            borderRadius:
+                            BorderRadius.vertical(top: Radius.circular(20)),
+                          ),
+                          builder: (BuildContext context) {
+                            return ChatbotModal(dogId: dogId);
+                          },
+                        );
+                      },
+                    ),
+                  ],
+                ),
+                // --- [삭제] 나머지 네비게이션 버튼들 ---
+              ],
             ),
-          ],
+          ),
         );
       },
     );
   }
 
-  Future<void> _runAnalysis(
-      Future<Map<String, dynamic>> Function() analysisFunction,
-      ) async {
-    // (내용 변경 없음)
-    setState(() {
-      _isLoading = true;
-      _result = 'Cloud Run 서버에 요청 중...';
-    });
-    try {
-      final result = await analysisFunction();
-      final isSuccess = result.containsKey('positive_score');
-      if (isSuccess) {
-        final positiveScore = result['positive_score'] ?? 0.0;
-        final activeScore = result['active_score'] ?? 0.0;
-        setState(() {
-          _result = '''
-✅ 분석 성공!
-- 긍정 점수: ${positiveScore.toStringAsFixed(2)}
-- 활동 점수: ${activeScore.toStringAsFixed(2)}''';
-        });
-        ref.invalidate(analysisResultsProvider((dogId: widget.dogId, viewType: 'daily')));
-      } else {
-        setState(() {
-          _result = '❌ 서버 응답 오류: ${result['detail'] ?? '알 수 없는 오류'}';
-        });
-      }
-    } catch (e) {
-      setState(() {
-        _result = '''💣 예기치 않은 오류 발생:
-$e''';
-      });
-    }
-    setState(() {
-      _isLoading = false;
-    });
-  }
+  // --- [삭제] _buildNavigationButton 함수 (더 이상 사용되지 않음) ---
 
-  @override
-  Widget build(BuildContext context) {
-    final restClient = ref.watch(restClientProvider);
-    // --- [삭제] 목업 이미지/오디오 데이터는 더 이상 사용하지 않으므로 삭제합니다. ---
-
-    final ButtonStyle analysisButtonStyle = ElevatedButton.styleFrom(
-        backgroundColor: const Color(0xFF94B4FF),
+  // --- [수정] 버튼 스타일을 좀 더 크고 둥글게 변경, 색상을 파라미터로 받음 ---
+  Widget _buildSpecialActionButton({
+    required BuildContext context,
+    required IconData icon,
+    required String label,
+    required VoidCallback onPressed,
+    required Color color, // [추가]
+  }) {
+    return ElevatedButton.icon(
+      icon: Icon(icon, color: Colors.white, size: 28), // [수정] 아이콘 크기
+      label: Text(label),
+      onPressed: onPressed,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: color, // [수정] 메인 컬러
         foregroundColor: Colors.white,
-        elevation: 2,
+        elevation: 4,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(20),
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        textStyle:
-        const TextStyle(fontSize: 15, fontWeight: FontWeight.w500));
-
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(16.0),
-          width: double.infinity,
-          decoration: BoxDecoration(
-            color: const Color(0xFFF0F4FF),
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Text(
-            _result,
-            style: const TextStyle(fontSize: 16, color: Color(0xFF555555)),
-            textAlign: TextAlign.center,
-          ),
-        ),
-        const SizedBox(height: 20),
-        if (_isLoading) const CircularProgressIndicator(),
-        if (!_isLoading)
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            alignment: WrapAlignment.center,
-            children: [
-              // --- ▼▼▼ [수정] 소리 분석 버튼의 onPressed 로직을 수정합니다. ▼▼▼ ---
-              ElevatedButton.icon(
-                style: analysisButtonStyle,
-                icon: const Icon(Icons.multitrack_audio, size: 20),
-                label: const Text('소리 분석'),
-                onPressed: _isLoading
-                    ? null
-                    : () async {
-                  // 1. 오디오 파일 선택
-                  final audioFile = await _pickAudioFile();
-                  if (audioFile == null) return;
-
-                  // 2. 활동 설명
-                  final description = await _showDescriptionDialog();
-                  if (description == null) return;
-
-                  // 3. 인증 토큰
-                  final accessToken = Supabase.instance.client.auth.currentSession?.accessToken;
-                  if (accessToken == null) return;
-
-                  // 4. 실제 오디오 파일로 분석 실행
-                  await _runAnalysis(() => restClient.analyzeSound(
-                      dogId: widget.dogId,
-                      audioBytes: audioFile.bytes,
-                      audioFilename: audioFile.name,
-                      accessToken: accessToken,
-                      activityDescription: description));
-                },
-              ),
-              // 표정 분석 버튼 (변경 없음)
-              ElevatedButton.icon(
-                style: analysisButtonStyle,
-                icon: const Icon(Icons.sentiment_satisfied_outlined, size: 20),
-                label: const Text('표정 분석'),
-                onPressed: _isLoading
-                    ? null
-                    : () async {
-                  final videoFile = await _pickVideoFile();
-                  if (videoFile == null) return;
-                  final description = await _showDescriptionDialog();
-                  if (description == null) return;
-                  final accessToken = Supabase.instance.client.auth.currentSession?.accessToken;
-                  if (accessToken == null) return;
-                  await _runAnalysis(() => restClient.analyzeFacialExpression(
-                    dogId: widget.dogId,
-                    videoBytes: videoFile.bytes,
-                    videoFilename: videoFile.name,
-                    accessToken: accessToken,
-                    activityDescription: description,
-                  ));
-                },
-              ),
-              // 몸짓 분석 버튼 (변경 없음 - 여전히 임시 데이터 사용)
-              ElevatedButton.icon(
-                style: analysisButtonStyle,
-                icon: const Icon(Icons.directions_run, size: 20),
-                label: const Text('몸짓 분석'),
-                onPressed: _isLoading
-                    ? null
-                    : () async {
-                  final description = await _showDescriptionDialog();
-                  if (description == null) return;
-                  final accessToken = Supabase.instance.client.auth.currentSession?.accessToken;
-                  if (accessToken == null) return;
-
-                  // 몸짓 분석은 아직 임시 데이터를 사용합니다.
-                  final mockImageData = Uint8List.fromList(List.generate(1024 * 5, (i) => i % 256));
-                  await _runAnalysis(() => restClient.analyzeBodyLanguage(
-                    dogId: widget.dogId,
-                    imageBytes: mockImageData,
-                    accessToken: accessToken,
-                    activityDescription: description,
-                  ));
-                },
-              ),
-              // 뇌파 분석 버튼 (변경 없음)
-              ElevatedButton.icon(
-                style: analysisButtonStyle,
-                icon: const Icon(Icons.waves, size: 20),
-                label: const Text('뇌파 분석'),
-                onPressed: _isLoading
-                    ? null
-                    : () async {
-                  final eegFile = await _pickEegFile();
-                  if (eegFile == null) return;
-                  final description = await _showDescriptionDialog();
-                  if (description == null) return;
-                  final accessToken =
-                      Supabase.instance.client.auth.currentSession?.accessToken;
-                  if (accessToken == null) return;
-                  await _runAnalysis(() => restClient.analyzeEEG(
-                      dogId: widget.dogId,
-                      eegBytes: eegFile.bytes,
-                      eegFilename: eegFile.name,
-                      accessToken: accessToken,
-                      activityDescription: description));
-                },
-              ),
-            ],
-          ),
-      ],
+        padding: const EdgeInsets.symmetric(vertical: 24), // [수정] 버튼 크기 키움
+        textStyle: const TextStyle(
+            fontSize: 20, fontWeight: FontWeight.bold), // [수정] 폰트 크기
+      ),
     );
   }
 }
-

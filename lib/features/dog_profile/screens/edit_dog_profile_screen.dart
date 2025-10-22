@@ -55,6 +55,23 @@ class _EditDogProfileScreenState extends ConsumerState<EditDogProfileScreen> {
     super.dispose();
   }
 
+  // --- [추가] 로그아웃 함수 ---
+  Future<void> _signOut(BuildContext context) async {
+    try {
+      await Supabase.instance.client.auth.signOut();
+      if (mounted) {
+        // 앱의 가장 첫 화면(AuthChecker가 있는)으로 이동시킵니다.
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('로그아웃 실패: $e')),
+        );
+      }
+    }
+  }
+
   Future<void> _updateProfile() async {
     if (!_formKey.currentState!.validate()) {
       return;
@@ -104,6 +121,14 @@ class _EditDogProfileScreenState extends ConsumerState<EditDogProfileScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('반려견 프로필 수정'),
+        // --- [추가] 로그아웃 버튼 ---
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: '로그아웃',
+            onPressed: () => _signOut(context),
+          ),
+        ],
       ),
       body: dogProfileAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),

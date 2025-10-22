@@ -159,25 +159,27 @@ class RestClient {
     );
   }
 
+  // --- ▼▼▼ [수정] analyzeBodyLanguage 함수를 수정합니다. ▼▼▼ ---
   Future<Map<String, dynamic>> analyzeBodyLanguage({
     required String dogId,
-    required Uint8List imageBytes,
+    required Uint8List videoBytes, // --- [수정] imageBytes -> videoBytes ---
+    required String videoFilename, // --- [추가] videoFilename ---
     required String accessToken,
     String? activityDescription,
   }) {
-    // 현재 몸짓 분석은 임시 데이터를 사용하므로, 이 부분은 수정하지 않습니다.
-    // 만약 몸짓 분석도 마이크로서비스화한다면 이 부분을 수정해야 합니다.
+    // --- [수정] 몸짓 분석도 비디오 파일을 받도록 변경 ---
     return _analyze(
       endpoint: 'ml/analyze_body_language',
       dogId: dogId,
-      bytes: imageBytes,
-      fileField: 'image_file',
-      fileName: 'image.jpg',
-      contentType: MediaType('image', 'jpeg'),
+      bytes: videoBytes, // --- [수정] ---
+      fileField: 'image_file', // 백엔드 필드명 (표정과 동일하게 유지)
+      fileName: videoFilename, // --- [수정] 'image.jpg' -> videoFilename ---
+      contentType: MediaType('video', 'mp4'), // --- [수정] 'image/jpeg' -> 'video/mp4' ---
       accessToken: accessToken,
       activityDescription: activityDescription,
     );
   }
+  // --- ▲▲▲ [수정 끝] ▲▲▲ ---
 
   Future<Map<String, dynamic>> analyzeEEG({
     required String dogId,
@@ -345,4 +347,3 @@ class RestClient {
     }
   }
 }
-

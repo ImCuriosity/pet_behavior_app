@@ -15,10 +15,20 @@ class DogAvatar extends FlameGame with TapCallbacks {
   DogAvatar({required this.positiveScore, required this.activeScore});
 
   late SpriteAnimationComponent _dogComponent;
-  late SpriteComponent _backgroundComponent; // ✨ [추가] 배경 컴포넌트
+  late SpriteComponent _backgroundComponent; // 하늘 (구름 스트립)
+  late SpriteComponent _floorComponent;    // 바닥 (잔디)
   late DogState currentState;
   bool _isPerformingInteractiveMotion = false;
   late SpriteAnimation _originalAnimation;
+
+  // 바닥의 높이를 정의합니다.
+  static const double floorHeight = 100.0;
+  // 하늘 스트립의 높이(두께)
+  static const double skyStripHeight = 90.0;
+  // ✨ [수정] 하늘 스트립의 Y축 위치를 20.0으로 변경하여 위로 올립니다.
+  static const double skyStripYPosition = -50.0;
+  // 강아지 수직 오프셋
+  static const double dogVerticalOffset = 90.0;
 
   final Map<InteractiveMotion, ({String imagePath, int frameCount, double stepTime})> _interactiveMotions = {
     InteractiveMotion.bark: (imagePath: 'dog_bark_strip6.png', frameCount: 6, stepTime: 0.1),
@@ -28,27 +38,44 @@ class DogAvatar extends FlameGame with TapCallbacks {
   };
 
   @override
-  Color backgroundColor() => Colors.transparent; // ✨ [수정] 배경색을 투명으로 설정하여 이미지가 보이도록 함
+  Color backgroundColor() => Colors.transparent; // 배경색을 투명으로 설정
 
   @override
   Future<void> onLoad() async {
     await super.onLoad();
 
-    // ✨ [추가] 배경 이미지 로드 및 추가
-    final backgroundImage = await images.load('cloud_morning_normal.png');
+    // ✨ [추가] positiveScore 값에 따라 낮/밤 배경 이미지를 선택합니다.
+    // 50 (0.5) 이상일 경우 낮(morning), 미만일 경우 밤(night)으로 설정합니다.
+    final String backgroundImgPath =
+    positiveScore >= 0.3 ? 'cloud_morning_normal.png' : 'cloud_night_normal.png';
+
+    // 하늘 배경 이미지 로드 (스트립 형태로)
+    final backgroundImage = await images.load(backgroundImgPath);
     _backgroundComponent = SpriteComponent.fromImage(
       backgroundImage,
-      size: size, // 게임 화면 전체 크기에 맞춤
-      position: Vector2.zero(),
+      size: Vector2(size.x, skyStripHeight),
+      position: Vector2(0, skyStripYPosition), // 수정된 Y 위치 적용
     );
-    _backgroundComponent.priority = -1; // 강아지 애니메이션보다 뒤에 렌더링되도록 우선순위 설정
+    // _backgroundComponent.priority = -2; // <- 제거
     add(_backgroundComponent);
+
+    // 잔디 바닥 이미지 로드 및 추가
+    final floorImage = await images.load('jun_grass.png');
+    _floorComponent = SpriteComponent.fromImage(
+      floorImage,
+      size: Vector2(size.x, floorHeight),
+      position: Vector2(0, size.y - floorHeight),
+    );
+    // _floorComponent.priority = -1; // <- 제거
+    add(_floorComponent);
 
     currentState = _getStateFromScores();
     _dogComponent = await _loadAnimation(currentState);
     add(_dogComponent);
-    _dogComponent.position = size / 2;
-    _dogComponent.priority = 0; // 강아지는 배경보다 위에 렌더링되도록 설정
+    _dogComponent.position = Vector2(
+      size.x / 2,
+      size.y - floorHeight + dogVerticalOffset,
+    );
 
     _originalAnimation = _dogComponent.animation!;
   }
@@ -101,7 +128,12 @@ class DogAvatar extends FlameGame with TapCallbacks {
     final spriteSheet = SpriteSheet(image: image, srcSize: textureSize);
     final animation = spriteSheet.createAnimation(row: 0, stepTime: stepTime, to: frameCount, loop: loop);
 
-    return SpriteAnimationComponent(animation: animation, size: Vector2.all(256), anchor: Anchor.center);
+    return SpriteAnimationComponent(
+      animation: animation,
+      size: Vector2.all(256),
+      anchor: Anchor.bottomCenter,
+      // priority: 0, // <- 제거
+    );
   }
 
   @override
@@ -147,14 +179,23 @@ class DogAvatar extends FlameGame with TapCallbacks {
   void onGameResize(Vector2 size) {
     super.onGameResize(size);
     if (isMounted) {
-      // ✨ [수정] 배경 컴포넌트의 크기와 위치도 업데이트
-      _backgroundComponent.size = size;
-      _dogComponent.position = size / 2;
+      // 배경(하늘 스트립) 컴포넌트의 크기와 위치도 업데이트
+      _backgroundComponent.size = Vector2(size.x, skyStripHeight);
+      _backgroundComponent.position = Vector2(0, skyStripYPosition); // 수정된 Y 위치 적용
+
+      // 바닥 컴포넌트 크기/위치 업데이트
+      _floorComponent.size = Vector2(size.x, floorHeight);
+      _floorComponent.position = Vector2(0, size.y - floorHeight);
+
+      // 강아지 위치도 바닥 기준으로 업데이트
+      _dogComponent.position = Vector2(
+        size.x / 2,
+        size.y - floorHeight + dogVerticalOffset,
+      );
     }
   }
 }
 
-// DogAvatarWidget은 수정할 필요 없습니다.
 class DogAvatarWidget extends StatelessWidget {
   final double positiveScore;
   final double activeScore;
@@ -167,12 +208,11 @@ class DogAvatarWidget extends StatelessWidget {
     return GameWidget(
       game: DogAvatar(positiveScore: positiveScore, activeScore: activeScore),
       loadingBuilder: (context) => const Center(
-        // ✨ [수정] 로딩 중 배경색을 설정하여 흰색 깜빡임을 방지
         child: SizedBox(
           width: double.infinity,
           height: double.infinity,
           child: DecoratedBox(
-            decoration: BoxDecoration(color: Color(0xFFF8F7FF)), // 홈 화면 배경색과 동일하게
+            decoration: BoxDecoration(color: Color(0xFFF8F7FF)),
             child: Center(child: CircularProgressIndicator()),
           ),
         ),
