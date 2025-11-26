@@ -2,15 +2,4 @@
 
 dognal1
 
-## Getting Started
-
-This project is a starting point for a Flutter application.
-
-A few resources to get you started if this is your first Flutter project:
-
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+반려견의 뇌파, 표정, 음성, 몸짓 등 복합 생체 신호를 AI로 분석하여 감정과 활동성을 정량적으로 평가하고, 챗봇을 통해 반려인과 소통하는 펫 케어 플랫폼입니다.
