@@ -47,7 +47,7 @@ class DogAvatar extends FlameGame with TapCallbacks {
     // ✨ [추가] positiveScore 값에 따라 낮/밤 배경 이미지를 선택합니다.
     // 50 (0.5) 이상일 경우 낮(morning), 미만일 경우 밤(night)으로 설정합니다.
     final String backgroundImgPath =
-    positiveScore >= 0.3 ? 'cloud_morning_normal.png' : 'cloud_night_normal.png';
+    positiveScore >= 0.4 ? 'cloud_morning_normal.png' : 'cloud_night_normal.png';
 
     // 하늘 배경 이미지 로드 (스트립 형태로)
     final backgroundImage = await images.load(backgroundImgPath);

@@ -276,6 +276,8 @@ class TamagotchiScreen extends ConsumerWidget {
 
               Stack(
 
+                clipBehavior: Clip.none,
+
                 alignment: Alignment.topCenter, // 요소들을 상단 중앙에 정렬
 
                 children: [
@@ -308,13 +310,19 @@ class TamagotchiScreen extends ConsumerWidget {
 
 // Stack의 첫 번째 자식이므로 맨 위에 그려집니다.
 
-                  SpeechBubble(message: message),
+                  Transform.translate(
+
+                    offset: const Offset(0, -20.0),
+
+                    child: SpeechBubble(message: message),
+
+                  ),
 
                 ],
 
               ),
 
-              const SizedBox(height: 62),
+              const SizedBox(height: 32),
 
             ],
 
